@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "multi-index-rag"
+version = "0.1.0"
+description = "Retrieval-Augmented Generation with Formula-Aware Retrieval"
+authors = ["Abram Jopaul <abram.jopaul@uni-koblenz.de>"]
+readme = "README.md"
+packages = [
+    { include = "multirag", from = "src" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.12"
+lxml = ">=4.9.0"
+beautifulsoup4 = ">=4.12.0"
+tqdm = "^4.67.3"
+pyserini = ">=0.22.0"
+pyyaml = ">=6.0"
+ranx = "^0.3.13"
+wandb = ">=0.15.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+[dependency-groups]
+dev = [
+    "black (>=26.3.1,<27.0.0)",
+    "isort (>=8.0.1,<9.0.0)"
+]
