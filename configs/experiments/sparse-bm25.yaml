@@ -1,0 +1,27 @@
+# Example run configuration for W&B logging
+# Rename and modify this file for different runs
+
+run_name: "bm25_sparse_baseline"  # Used for W&B run name and grouping
+index_type: "sparse"
+
+# Retrieval parameters
+num_hits: 1000  # Number of hits to retrieve from index per topic
+
+# Evaluation parameters
+metrics:
+  - "ndcg"
+  - "recall"
+  - "precision"
+  - "map"
+  - "mrr"
+
+
+k_values:  # Cutoff values for @k metrics
+  - 10
+  - 100
+  - 1000
+
+# Optional parameters
+index_corpus_limit: null  # null = use all documents; set to e.g. 1000 for debugging
+force_rebuild: false  # Set to true to force rebuild the index (default: reuse existing)
+experiment_name: "Baseline Runs"  # W&B experiment grouping

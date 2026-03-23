@@ -1,0 +1,29 @@
+# Poetry virtualenv (Poetry manages this outside the project by default,
+# but ignore it if you've configured it to be inside)
+.venv/
+
+# VSCode settings
+.vscode/  
+
+# Cursor files
+.cursor/  
+
+# Data — too large for git
+data/
+
+# Weights & Biases logs
+wandb/
+
+experiments/runs
+
+.python-version
+
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# OS files
+.DS_Store
