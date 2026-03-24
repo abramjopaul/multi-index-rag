@@ -16,8 +16,6 @@ wandb/
 
 experiments/runs
 
-.python-version
-
 
 # Python cache
 __pycache__/

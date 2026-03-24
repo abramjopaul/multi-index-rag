@@ -61,6 +61,7 @@ QREL_2022_JSONL = QRELS_PROCESSED / "qrel_2022.jsonl"
 # Index paths
 INDEX_DIR = DATA_DIR / "indices"
 SPARSE_INDEX_PATH = INDEX_DIR / "sparse_bm25"
+DENSE_INDEX_PATH = INDEX_DIR / "dense"
 
 # Config paths
 CONFIGS_DIR = PROJECT_ROOT / "configs"
