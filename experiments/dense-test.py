@@ -24,13 +24,10 @@ if __name__ == "__main__":
     indexer = PyseriniDenseIndexer(
     index_path=DENSE_INDEX_PATH,
     corpus_path=ANSWERS_JSONL,
-    batch_size=128,
-    device="mps",
-    embedding_model="sentence-transformers/all-MiniLM-L6-v2",  # Much faster
     )
     
     # Index first 100 documents for quick testing
-    indexer.index(force=True, limit=10000)
+    indexer.index(force=True, limit=500)
     # print("✓ Index created")
     
     # Test single query

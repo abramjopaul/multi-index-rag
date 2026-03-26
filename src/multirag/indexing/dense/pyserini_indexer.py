@@ -9,14 +9,14 @@ from typing import Any
 import numpy as np
 from bs4 import BeautifulSoup
 from pyserini.search.faiss import FaissSearcher
-from pyserini.encode import AutoDocumentEncoder
+from pyserini.encode import AnceDocumentEncoder
 from tqdm import tqdm
 
 from multirag.indexing.base import BaseIndexer
 
 
 class PyseriniDenseIndexer(BaseIndexer):
-    """Dense embedding-based indexer using Pyserini AutoDocumentEncoder and FAISS.
+    """Dense embedding-based indexer using Pyserini AnceDocumentEncoder and FAISS.
     
     Builds a FAISS index with files compatible with Pyserini's FaissSearcher:
     - {index_path}/index: Binary FAISS index file
@@ -27,20 +27,16 @@ class PyseriniDenseIndexer(BaseIndexer):
         self,
         index_path: str | Path,
         corpus_path: str | Path,
-        embedding_model: str = "sentence-transformers/all-MiniLM-L12-v2",
-        batch_size: int = 32,
-        device: str = "cpu",
-        pooling: str = "mean",
-        l2_norm: bool = False,
+        embedding_model: str = "castorini/ance-msmarco-passage",
+        batch_size: int = 64,
+        device: str = "mps",
     ):
         self.index_path = Path(index_path)
         self.corpus_path = Path(corpus_path)
         self.embedding_model = embedding_model
         self.batch_size = batch_size
         self.device = device
-        self.pooling = pooling
-        self.l2_norm = l2_norm
-        self._embedder: AutoDocumentEncoder | None = None
+        self._embedder: AnceDocumentEncoder | None = None
         self._searcher: FaissSearcher | None = None
 
     @property
@@ -50,14 +46,12 @@ class PyseriniDenseIndexer(BaseIndexer):
         docid_file = self.index_path / "docid"
         return index_file.exists() and docid_file.exists()
 
-    def _get_embedder(self) -> AutoDocumentEncoder:
+    def _get_embedder(self) -> AnceDocumentEncoder:
         """Lazy load and cache the document encoder model."""
         if self._embedder is None:
-            self._embedder = AutoDocumentEncoder(
+            self._embedder = AnceDocumentEncoder(
                 model_name=self.embedding_model,
                 device=self.device,
-                pooling=self.pooling,
-                l2_norm=self.l2_norm,
             )
         return self._embedder
 
@@ -104,7 +98,7 @@ class PyseriniDenseIndexer(BaseIndexer):
         if self.index_exists and force:
             shutil.rmtree(self.index_path)
 
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        self.index_path.mkdir(parents=True, exist_ok=True)
 
         embedder = self._get_embedder()
 
@@ -112,85 +106,137 @@ class PyseriniDenseIndexer(BaseIndexer):
         total_docs = sum(1 for line in open(self.corpus_path) if line.strip())
         total_docs = min(total_docs, limit) if limit else total_docs
 
-        # Collect all embeddings and docids
-        all_embeddings = []
-        all_docids = []
+        # Temporary disk file for embeddings (avoids O(n²) FAISS reallocation)
+        embeddings_tmp_path = self.index_path / ".embeddings.tmp"
+        docid_path = str(self.index_path / "docid")
+        
+        embeddings_tmp_file = None
+        docid_file = None
+        embedding_dim = None
+        total_embeddings = 0
 
-        with open(self.corpus_path) as f:
-            batch_texts = []
-            batch_docids = []
-            indexed_count = 0
+        try:
+            with open(self.corpus_path) as f:
+                batch_texts = []
+                batch_docids = []
+                indexed_count = 0
 
-            with tqdm(total=total_docs, desc="Encoding documents", unit="doc") as pbar:
-                for line in f:
-                    if not line.strip():
-                        continue
+                with tqdm(total=total_docs, desc="Encoding documents", unit="doc") as pbar:
+                    for line in f:
+                        if not line.strip():
+                            continue
 
-                    raw = json.loads(line)
-                    doc = self.prepare_document(raw)
-                    docid = doc["id"]
-                    text = doc["contents"]
+                        raw = json.loads(line)
+                        doc = self.prepare_document(raw)
+                        docid = doc["id"]
+                        text = doc["contents"]
 
-                    batch_texts.append(text)
-                    batch_docids.append(docid)
-                    indexed_count += 1
+                        batch_texts.append(text)
+                        batch_docids.append(docid)
+                        indexed_count += 1
 
-                    if len(batch_texts) >= self.batch_size:
-                        # Encode batch - no convert_to_numpy needed, already returns numpy
+                        if len(batch_texts) >= self.batch_size:
+                            # Encode batch
+                            embeddings = embedder.encode(
+                                batch_texts, max_length=256
+                            )
+                            
+                            # Initialize temp files on first batch
+                            if embeddings_tmp_file is None:
+                                embedding_dim = embeddings.shape[1]
+                                embeddings_tmp_file = open(embeddings_tmp_path, "wb")
+                                docid_file = open(docid_path, "w")
+                            
+                            # Stream embeddings to disk (avoids O(n²) FAISS reallocation)
+                            np.save(embeddings_tmp_file, embeddings.astype(np.float32))
+                            
+                            # Write docids
+                            for docid in batch_docids:
+                                docid_file.write(f"{docid}\n")
+                            
+                            total_embeddings += len(embeddings)
+                            pbar.update(len(batch_texts))
+                            batch_texts = []
+                            batch_docids = []
+
+                        # Stop if limit is reached
+                        if limit and indexed_count >= limit:
+                            break
+
+                    # Process remaining documents
+                    if batch_texts:
                         embeddings = embedder.encode(
                             batch_texts, max_length=256
                         )
-                        all_embeddings.extend(embeddings)
-                        all_docids.extend(batch_docids)
-
+                        
+                        if embeddings_tmp_file is None:
+                            embedding_dim = embeddings.shape[1]
+                            embeddings_tmp_file = open(embeddings_tmp_path, "wb")
+                            docid_file = open(docid_path, "w")
+                        
+                        np.save(embeddings_tmp_file, embeddings.astype(np.float32))
+                        for docid in batch_docids:
+                            docid_file.write(f"{docid}\n")
+                        
+                        total_embeddings += len(embeddings)
                         pbar.update(len(batch_texts))
-                        batch_texts = []
-                        batch_docids = []
-
-                    # Stop if limit is reached
-                    if limit and indexed_count >= limit:
-                        break
-
-                # Process remaining documents
-                if batch_texts:
-                    embeddings = embedder.encode(
-                        batch_texts, max_length=256
-                    )
-                    all_embeddings.extend(embeddings)
-                    all_docids.extend(batch_docids)
-                    pbar.update(len(batch_texts))
-
-        # Convert to numpy array and save FAISS index
-        embeddings_array = np.array(all_embeddings, dtype="float32")
-        self._save_faiss_index(embeddings_array, all_docids)
-
-    def _save_faiss_index(self, embeddings: np.ndarray, docids: list[str]) -> None:
-        """Save FAISS index in Pyserini format.
+            
+            # Close temp files
+            if embeddings_tmp_file is not None:
+                embeddings_tmp_file.close()
+            if docid_file is not None:
+                docid_file.close()
+            
+            # Build FAISS index from disk (O(n) single pass)
+            if embedding_dim is not None:
+                self._build_faiss_index_from_disk(
+                    embeddings_tmp_path, total_embeddings, embedding_dim
+                )
         
-        Creates:
-        - {index_path}/index: Binary FAISS index
-        - {index_path}/docid: Text file with docids (one per line)
+        finally:
+            if embeddings_tmp_file is not None and not embeddings_tmp_file.closed:
+                embeddings_tmp_file.close()
+            if docid_file is not None and not docid_file.closed:
+                docid_file.close()
+
+    def _build_faiss_index_from_disk(
+        self, embeddings_tmp_path: Path, total_embeddings: int, embedding_dim: int
+    ) -> None:
+        """Build FAISS index from disk-saved embeddings in a single O(n) pass.
+        
+        Args:
+            embeddings_tmp_path: Path to temporary file with numpy arrays
+            total_embeddings: Total number of embeddings to expect
+            embedding_dim: Dimensionality of embeddings
         """
         import faiss
-
-        self.index_path.mkdir(parents=True, exist_ok=True)
-
-        # Create FAISS index using inner product (cosine similarity for normalized embeddings)
-        embedding_dim = embeddings.shape[1]
+        
+        # Create index
         faiss_index = faiss.IndexFlatIP(embedding_dim)
         
-        # Add embeddings
-        faiss_index.add(embeddings.astype(np.float32))
-
-        # Save FAISS index
+        # Read all embeddings from disk and add to index (single allocation)
+        embeddings_tmp_path = Path(embeddings_tmp_path)
+        with open(embeddings_tmp_path, "rb") as f:
+            with tqdm(
+                total=total_embeddings,
+                desc="Building FAISS index",
+                unit="doc",
+            ) as pbar:
+                while True:
+                    try:
+                        embeddings_batch = np.load(f, allow_pickle=False)
+                        faiss_index.add(embeddings_batch.astype(np.float32))
+                        pbar.update(len(embeddings_batch))
+                    except (ValueError, EOFError):
+                        # End of file
+                        break
+        
+        # Save final index
         index_path = str(self.index_path / "index")
         faiss.write_index(faiss_index, index_path)
-
-        # Save docids in Pyserini format (one per line)
-        docid_path = str(self.index_path / "docid")
-        with open(docid_path, "w") as f:
-            for docid in docids:
-                f.write(f"{docid}\n")
+        
+        # Clean up temp file
+        embeddings_tmp_path.unlink()
 
     def search(self, query: str, k: int = 10) -> list[dict[str, Any]]:
         """Search and return top-k hits.
