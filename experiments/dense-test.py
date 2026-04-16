@@ -8,8 +8,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 if __name__ == "__main__":
-    from multirag.config.path_configs import (ANSWERS_JSONL, DENSE_INDEX_PATH,
-                                              TOPICS_JSONL)
+    from multirag.config.path_configs import (
+        ANSWERS_JSONL,
+        DENSE_INDEX_PATH,
+        TOPICS_JSONL,
+    )
     from multirag.indexing.dense import PyseriniDenseIndexer
 
     # HF token is now loaded from .env

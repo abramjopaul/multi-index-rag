@@ -9,6 +9,7 @@ Adapted for multirag formula_search module with relative imports
 """
 
 import sys
+
 ##import pickle
 ##import requests as req
 import xml.etree.ElementTree as ET

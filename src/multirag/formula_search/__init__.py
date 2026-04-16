@@ -27,17 +27,18 @@ Example:
 """
 
 from multirag.formula_search.exceptions import UnknownTagException
-from multirag.formula_search.formula_tokenizer_pipeline import \
-    FormulaTokenizerPipeline
+from multirag.formula_search.formula_tokenizer_pipeline import FormulaTokenizerPipeline
 from multirag.formula_search.layout_symbol import LayoutSymbol
 from multirag.formula_search.math_extractor import MathExtractor
 from multirag.formula_search.opt_generator import OPTGenerator
 from multirag.formula_search.semantic_symbol import SemanticSymbol
 from multirag.formula_search.slt_generator import SLTGenerator
 from multirag.formula_search.symbol_tree import SymbolTree
-from multirag.formula_search.tuple_tokenizer import (TokenIDManager,
-                                                     TupleTokenizationMode,
-                                                     TupleTokenizer)
+from multirag.formula_search.tuple_tokenizer import (
+    TokenIDManager,
+    TupleTokenizationMode,
+    TupleTokenizer,
+)
 
 __all__ = [
     "SLTGenerator",
