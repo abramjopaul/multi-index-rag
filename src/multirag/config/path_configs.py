@@ -63,7 +63,19 @@ INDEX_DIR = DATA_DIR / "indices"
 SPARSE_INDEX_PATH = INDEX_DIR / "sparse_bm25"
 DENSE_INDEX_PATH = INDEX_DIR / "dense"
 
+# Formula index paths
+FORMULA_INDEX_DIR = INDEX_DIR / "formula"
+FORMULA_MODELS_DIR = INDEX_DIR / "formula_models"
+FORMULA_INDEX_FILE = FORMULA_INDEX_DIR / "index.faiss"
+FORMULA_METADATA_FILE = FORMULA_INDEX_DIR / "formula_metadata.json"
+FORMULA_ENCODER_MAPS_FILE = FORMULA_MODELS_DIR / "encoder_maps.pkl"
+
+# Formula preprocessing paths
+FORMULA_CORPUS_CSV = DATA_PROCESSED / "formula_corpus.csv"
+FORMULA_TSV = COLLECTION_PROCESSED / "formulas.tsv"
+
 # Config paths
 CONFIGS_DIR = PROJECT_ROOT / "configs"
 EXPERIMENTS_CONFIG_DIR = CONFIGS_DIR / "experiments"
 PROMPTS_CONFIG_DIR = CONFIGS_DIR / "prompts"
+FORMULA_CONFIG_PATH = CONFIGS_DIR / "formula_indexing.yaml"
