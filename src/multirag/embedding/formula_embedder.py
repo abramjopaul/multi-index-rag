@@ -12,8 +12,7 @@ import pandas as pd
 from gensim.models import FastText
 from tqdm import tqdm
 
-from multirag.formula_search import (FormulaTokenizerPipeline,
-                                     TupleTokenizationMode)
+from multirag.formula_search import FormulaTokenizerPipeline, TupleTokenizationMode
 
 logger = logging.getLogger(__name__)
 

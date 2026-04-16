@@ -29,11 +29,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from logging_config import configure_logging
 
 from multirag.config import RunConfigManager
-from multirag.config.path_configs import (ANSWERS_JSONL,
-                                          QREL_TASK1_2022_OFFICIAL, RUNS_DIR,
-                                          SPARSE_INDEX_PATH, TOPICS_JSONL)
-from multirag.evaluation.metrics import (evaluate_run, generate_run_file,
-                                         print_evaluation_report)
+from multirag.config.path_configs import (
+    ANSWERS_JSONL,
+    QREL_TASK1_2022_OFFICIAL,
+    RUNS_DIR,
+    SPARSE_INDEX_PATH,
+    TOPICS_JSONL,
+)
+from multirag.evaluation.metrics import (
+    evaluate_run,
+    generate_run_file,
+    print_evaluation_report,
+)
 from multirag.indexing.sparse import PyseriniSparseIndexer
 
 # Configure logging (accepts CLI arg or defaults to INFO)

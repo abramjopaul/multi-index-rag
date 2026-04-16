@@ -11,9 +11,11 @@ from typing import Dict, List, Literal, Optional
 from multirag.formula_search.encoder_maps import load_maps, save_maps
 from multirag.formula_search.opt_generator import OPTGenerator
 from multirag.formula_search.slt_generator import SLTGenerator
-from multirag.formula_search.tuple_tokenizer import (TokenIDManager,
-                                                     TupleTokenizationMode,
-                                                     TupleTokenizer)
+from multirag.formula_search.tuple_tokenizer import (
+    TokenIDManager,
+    TupleTokenizationMode,
+    TupleTokenizer,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -6,8 +6,7 @@ from logging_config import configure_logging
 
 from multirag.embedding.formula_embedder import FormulaEmbedder
 from multirag.embedding.formula_trainer import FormulaTrainer
-from multirag.formula_search.formula_tokenizer_pipeline import \
-    FormulaTokenizerPipeline
+from multirag.formula_search.formula_tokenizer_pipeline import FormulaTokenizerPipeline
 from multirag.formula_search.opt_generator import OPTGenerator
 from multirag.formula_search.slt_generator import SLTGenerator
 
@@ -41,10 +40,10 @@ print("=" * 70 + "\n")
 
 start_time = time.time()
 
-trainer = FormulaTrainer(tree_type="OPT",use_process_pool=True, num_workers=8)
+trainer = FormulaTrainer(tree_type="OPT", use_process_pool=True, num_workers=8)
 model = trainer.train(
     file_numbers=[1, 2, 3],
-    num_formulas=50,
+    num_formulas=500,
     formula_column="formula",
 )
 

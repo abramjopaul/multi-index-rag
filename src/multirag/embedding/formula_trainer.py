@@ -12,29 +12,77 @@ from typing import Dict, List, Literal, Optional
 
 import pandas as pd
 from gensim.models import FastText
+from gensim.models.callbacks import CallbackAny2Vec
 from tqdm import tqdm
 
-from multirag.config.path_configs import (FASTTEXT_MODEL_DIR, FORMULA_INDEX_DIR,
-                                          LATEX_REPRESENTATION)
-from multirag.formula_search import (OPTGenerator, SLTGenerator,
-                                     TokenIDManager, TupleTokenizationMode,
-                                     TupleTokenizer)
-from multirag.formula_search.encoder_maps import load_maps, save_maps
-from multirag.formula_search.formula_tokenizer_pipeline import get_project_root
-from multirag.formula_search.latex_mml import LatexToMathML
+from multirag.config.path_configs import (
+    FASTTEXT_MODEL_DIR,
+    FORMULA_INDEX_DIR,
+    LATEX_REPRESENTATION,
+)
+from multirag.formula_search import (
+    OPTGenerator,
+    SLTGenerator,
+    TokenIDManager,
+    TupleTokenizationMode,
+    TupleTokenizer,
+)
+from multirag.formula_search.encoder_maps import save_maps
 
 logger = logging.getLogger(__name__)
 
 
-# def get_default_indexing_dir() -> Path:
-#     """Get default directory for formula indexing artifacts (data/formula-indexing)."""
-#     project_root = get_project_root()
-#     return project_root / "data" / "formula-indexing"
+class TrainingProgressCallback(CallbackAny2Vec):
+    """Callback to track FastText training progress with tqdm."""
 
+    def __init__(self, epochs: int, corpus_file: str):
+        """Initialize callback with epoch count and corpus file size."""
+        self.epochs = epochs
+        self.epoch = 0
 
-# def get_fasttext_dir() -> Path:
-#     """Get directory for FastText models and training data."""
-#     return get_default_indexing_dir() / "fasttext"
+        # Calculate corpus size (number of lines)
+        with open(corpus_file, "r", encoding="utf-8") as f:
+            self.corpus_size = sum(1 for _ in f)
+
+        self.pbar = None
+
+    def on_epoch_begin(self, model) -> None:
+        """Called at start of each epoch."""
+        self.epoch += 1
+        total_words = (
+            self.corpus_size * model.corpus_total_words
+            if model.corpus_total_words
+            else self.corpus_size
+        )
+        desc = f"Training (Epoch {self.epoch}/{self.epochs})"
+
+        if self.pbar:
+            self.pbar.close()
+
+        self.pbar = tqdm(
+            total=total_words, desc=desc, unit=" words", unit_scale=True, leave=True
+        )
+
+    def on_epoch_end(self, model) -> None:
+        """Called at end of each epoch."""
+        if self.pbar:
+            self.pbar.update(self.pbar.total - self.pbar.n)  # Complete the bar
+            self.pbar.close()
+
+    def on_train_end(self, model) -> None:
+        """Called when training finishes."""
+        if self.pbar:
+            self.pbar.close()
+
+    def __getstate__(self) -> Dict:
+        """Exclude pbar from pickling (tqdm with file handles can't be pickled)."""
+        state = self.__dict__.copy()
+        state["pbar"] = None
+        return state
+
+    def __setstate__(self, state: Dict) -> None:
+        """Restore state, ensuring pbar is properly initialized."""
+        self.__dict__.update(state)
 
 
 class FormulaTrainer:
@@ -486,6 +534,12 @@ class FormulaTrainer:
         logger.info(f"  Max n-gram: {self.max_n}")
         logger.info(f"  Negative: {self.negative}")
 
+        # Train with progress callback
+        epochs = 5
+        callback = TrainingProgressCallback(
+            epochs=epochs, corpus_file=str(self.corpus_path)
+        )
+
         # Train with LineSentence corpus file
         self.model = FastText(
             corpus_file=str(self.corpus_path),
@@ -496,7 +550,8 @@ class FormulaTrainer:
             negative=self.negative,
             sg=0,  # CBOW (0) or Skip-gram (1)
             seed=42,
-            epochs=5,  # Training epochs
+            epochs=epochs,
+            callbacks=[callback],  # Add progress callback
         )
 
         logger.info("Training complete")
