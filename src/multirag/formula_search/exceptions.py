@@ -7,7 +7,7 @@ Original authors: Nidhin Pattaniyil, Richard Zanibbi
 Adapted for multirag formula_search module
 """
 
-__author__ = 'Nidhin'
+__author__ = "Nidhin"
 
 
 class UnknownTagException(Exception):

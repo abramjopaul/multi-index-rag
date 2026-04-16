@@ -16,12 +16,11 @@ Modules:
     - config: Configuration management
 """
 
-from . import formula_search
-from . import embedding
+from . import embedding, formula_search
 
-__version__ = '0.1.0'
-__author__ = 'multirag'
+__version__ = "0.1.0"
+__author__ = "multirag"
 
 __all__ = [
-    'formula_search',
+    "formula_search",
 ]

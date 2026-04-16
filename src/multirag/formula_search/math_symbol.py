@@ -10,6 +10,7 @@ Adapted for multirag formula_search module
 
 import re
 
+
 class MathSymbol:
     def __init__(self, tag):
         self.tag = tag
@@ -77,7 +78,7 @@ class MathSymbol:
             return "-"
 
     @staticmethod
-    def ignore_tag(elem):  #FWT
+    def ignore_tag(elem):  # FWT
         """
         invisible operators and whitespace to be omitted from SymbolTree
         :return: True if node to be ignored
@@ -85,9 +86,18 @@ class MathSymbol:
         """
         if not elem:
             return True
-        if elem.tag in ['W!', '']: # simple types with no values and no links
-            return not (elem.next or elem.above or elem.below or elem.over or elem.under
-                        or elem.within or elem.pre_above or elem.pre_below or elem.element)
+        if elem.tag in ["W!", ""]:  # simple types with no values and no links
+            return not (
+                elem.next
+                or elem.above
+                or elem.below
+                or elem.over
+                or elem.under
+                or elem.within
+                or elem.pre_above
+                or elem.pre_below
+                or elem.element
+            )
 
     @staticmethod
     def clean(tag):
@@ -101,30 +111,40 @@ class MathSymbol:
         """
         if not tag:
             return ""
-        tag = tag.strip().translate({9:r"\t", 10:r"\n", 13:r"\r",
-                                     63:"&quest;", 44:"&comma;", 91:"&lsqb;", 93:"&rsqb;"})
-        if tag in ['\u2061', '\u2062', '\u2063', '\u2064']: # invisible operators
+        tag = tag.strip().translate(
+            {
+                9: r"\t",
+                10: r"\n",
+                13: r"\r",
+                63: "&quest;",
+                44: "&comma;",
+                91: "&lsqb;",
+                93: "&rsqb;",
+            }
+        )
+        if tag in ["\u2061", "\u2062", "\u2063", "\u2064"]:  # invisible operators
             return ""
         return tag
 
     ###########################################################################################################
     # Run length encoding and decoding -- adapted from http://rosettacode.org/wiki/Run-length_encoding#Python #
     ###########################################################################################################
-    @classmethod                                                                                              #
-    def rlencode(cls,text):                                                                                   #
-        '''
+    @classmethod  #
+    def rlencode(cls, text):  #
+        """
         Doctest:
             >>> encode('WWWWWWWWWWWWBWWWWWWWWWWWWBBBWWWWWWWWWWWWWWWWWWWWWWWWBWWWWWWWWWWWWWW')
             '12W1B12W3B24W1B14W'
-        '''
-        return re.sub(r'(.)\1*', lambda m: str(len(m.group(0))) + m.group(1), text)                           #
+        """
+        return re.sub(r"(.)\1*", lambda m: str(len(m.group(0))) + m.group(1), text)  #
 
-    @classmethod                                                                                              #
-    def rldecode(cls,text):                                                                                   #
-        '''
+    @classmethod  #
+    def rldecode(cls, text):  #
+        """
         Doctest:
             >>> decode('12W1B12W3B24W1B14W')
             'WWWWWWWWWWWWBWWWWWWWWWWWWBBBWWWWWWWWWWWWWWWWWWWWWWWWBWWWWWWWWWWWWWW'
-        '''
-        return re.sub(r'(\d+)(\D)', lambda m: m.group(2) * int(m.group(1)), text)                             #
+        """
+        return re.sub(r"(\d+)(\D)", lambda m: m.group(2) * int(m.group(1)), text)  #
+
     ###########################################################################################################

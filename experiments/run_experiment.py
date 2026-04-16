@@ -26,30 +26,26 @@ import wandb
 # Add src to path so imports work when run from any directory
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from logging_config import configure_logging
+
 from multirag.config import RunConfigManager
-from multirag.config.path_configs import (
-    ANSWERS_JSONL,
-    QREL_TASK1_2022_OFFICIAL,
-    RUNS_DIR,
-    SPARSE_INDEX_PATH,
-    TOPICS_JSONL,
-)
-from multirag.evaluation.metrics import (
-    evaluate_run,
-    generate_run_file,
-    print_evaluation_report,
-)
+from multirag.config.path_configs import (ANSWERS_JSONL,
+                                          QREL_TASK1_2022_OFFICIAL, RUNS_DIR,
+                                          SPARSE_INDEX_PATH, TOPICS_JSONL)
+from multirag.evaluation.metrics import (evaluate_run, generate_run_file,
+                                         print_evaluation_report)
 from multirag.indexing.sparse import PyseriniSparseIndexer
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Configure logging (accepts CLI arg or defaults to INFO)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
-def create_indexer(index_type: str | list[str], index_corpus_limit: int | None = None, force_rebuild: bool = False):
+def create_indexer(
+    index_type: str | list[str],
+    index_corpus_limit: int | None = None,
+    force_rebuild: bool = False,
+):
     """Factory function to create an indexer based on type.
 
     Args:
@@ -77,7 +73,9 @@ def create_indexer(index_type: str | list[str], index_corpus_limit: int | None =
             index_path=SPARSE_INDEX_PATH,
             corpus_path=ANSWERS_JSONL,
         )
-        logger.info(f"Indexing corpus (limit={index_corpus_limit}, force_rebuild={force_rebuild})...")
+        logger.info(
+            f"Indexing corpus (limit={index_corpus_limit}, force_rebuild={force_rebuild})..."
+        )
         indexer.index(force=force_rebuild, limit=index_corpus_limit)
         logger.info("Indexing complete")
         return indexer
@@ -146,7 +144,9 @@ Examples:
         # Load and validate config
         logger.info(f"Loading config from {config_path}")
         config = RunConfigManager.from_yaml(config_path)
-        config.run_name = config.run_name.replace(" ", "_")  # Convert "BM25 Sparse Baseline" to "BM25_Sparse_Baseline"
+        config.run_name = config.run_name.replace(
+            " ", "_"
+        )  # Convert "BM25 Sparse Baseline" to "BM25_Sparse_Baseline"
         logger.info(f"Config loaded successfully: {config.run_name}")
 
         # Initialize W&B (unless dry-run)
@@ -206,16 +206,18 @@ Examples:
             metrics_table = wandb.Table(columns=["Metric", "Value"])
             for metric_name, metric_value in sorted(metrics_dict.items()):
                 metrics_table.add_data(metric_name, metric_value)
-            
+
             # Log metrics as table
-            wandb.log({
-                "metrics_table": metrics_table,
-                "timestamp": datetime.now().isoformat(),
-                "run_file_path": str(run_path),
-                "config_file_path": str(config_path),
-                "topics_path": str(TOPICS_JSONL),
-                "qrels_path": str(QREL_TASK1_2022_OFFICIAL),
-            })
+            wandb.log(
+                {
+                    "metrics_table": metrics_table,
+                    "timestamp": datetime.now().isoformat(),
+                    "run_file_path": str(run_path),
+                    "config_file_path": str(config_path),
+                    "topics_path": str(TOPICS_JSONL),
+                    "qrels_path": str(QREL_TASK1_2022_OFFICIAL),
+                }
+            )
 
             # Upload files as artifacts
             logger.info("Uploading files as artifacts...")

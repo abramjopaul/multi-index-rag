@@ -64,11 +64,8 @@ SPARSE_INDEX_PATH = INDEX_DIR / "sparse_bm25"
 DENSE_INDEX_PATH = INDEX_DIR / "dense"
 
 # Formula index paths
-FORMULA_INDEX_DIR = INDEX_DIR / "formula"
-FORMULA_MODELS_DIR = INDEX_DIR / "formula_models"
-FORMULA_INDEX_FILE = FORMULA_INDEX_DIR / "index.faiss"
-FORMULA_METADATA_FILE = FORMULA_INDEX_DIR / "formula_metadata.json"
-FORMULA_ENCODER_MAPS_FILE = FORMULA_MODELS_DIR / "encoder_maps.pkl"
+FORMULA_INDEX_DIR = DATA_DIR / "formula-indexing"
+FASTTEXT_MODEL_DIR = FORMULA_INDEX_DIR / "fasttext"
 
 # Formula preprocessing paths
 FORMULA_CORPUS_CSV = DATA_PROCESSED / "formula_corpus.csv"
