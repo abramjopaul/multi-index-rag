@@ -11,19 +11,20 @@ Original authors: Kenny Davila Castellanos, Nidhin Pattaniyil, Richard Zanibbi
 Adapted for multirag formula_search module with relative imports
 """
 
-__author__ = 'KDavila'
-
-from multirag.formula_search.math_symbol import MathSymbol
-from multirag.formula_search.mathml import MathML
-from multirag.formula_search.exceptions import UnknownTagException
+__author__ = "KDavila"
 
 import html
+
+from multirag.formula_search.exceptions import UnknownTagException
+from multirag.formula_search.math_symbol import MathSymbol
+from multirag.formula_search.mathml import MathML
 
 
 class SemanticSymbol(MathSymbol):
     """
     Symbol in an operator tree
     """
+
     MaxChildren = 62  # 62
     CommutativePairs = True
 
@@ -49,7 +50,7 @@ class SemanticSymbol(MathSymbol):
         return current_size
 
     def is_leaf(self):
-        return (self.children is None or len(self.children) == 0)
+        return self.children is None or len(self.children) == 0
 
     @staticmethod
     def Copy(other):
@@ -98,7 +99,7 @@ class SemanticSymbol(MathSymbol):
         if identified is None:
             identified = {}
 
-        short_tag = elem.tag[len(MathML.namespace):]
+        short_tag = elem.tag[len(MathML.namespace) :]
 
         # expected MATHML root
         if elem.tag == MathML.math:
@@ -108,30 +109,36 @@ class SemanticSymbol(MathSymbol):
             elif len(children) == 0:
                 return None
             else:
-                raise Exception('math_tan element with more than 1 child')
+                raise Exception("math_tan element with more than 1 child")
 
         # operator tree leaves ...
         elif elem.tag == MathML.ci:
             content = MathSymbol.clean(elem.text)
-            retval = SemanticSymbol('V!' + content if content != '' else 'W!', parent=parent)
+            retval = SemanticSymbol(
+                "V!" + content if content != "" else "W!", parent=parent
+            )
 
         elif elem.tag == MathML.cn:
             content = MathSymbol.clean(elem.text)
-            retval = SemanticSymbol('N!' + content if content != '' else 'W!', parent=parent)
+            retval = SemanticSymbol(
+                "N!" + content if content != "" else "W!", parent=parent
+            )
 
         elif elem.tag == MathML.mtext:
             content = MathSymbol.clean(elem.text)
-            retval = SemanticSymbol('T!' + content if content != '' else 'W!', parent=parent)
+            retval = SemanticSymbol(
+                "T!" + content if content != "" else "W!", parent=parent
+            )
 
         elif elem.tag == MathML.mqvar or elem.tag == MathML.mqvar2:
-            if 'name' in elem.attrib:
-                var_name = elem.attrib['name']
+            if "name" in elem.attrib:
+                var_name = elem.attrib["name"]
             else:
                 var_name = MathSymbol.clean(elem.text)
-            return SemanticSymbol('?' + var_name, parent=parent)
+            return SemanticSymbol("?" + var_name, parent=parent)
 
         elif elem.tag == MathML.cerror:
-            err_root = SemanticSymbol('E!', children=[], parent=parent)
+            err_root = SemanticSymbol("E!", children=[], parent=parent)
 
             # connect any children ...
             children = list(elem)
@@ -209,7 +216,10 @@ class SemanticSymbol(MathSymbol):
 
                 for tempo_op in op_root.children:
                     if tempo_op.tag == "$!degree":
-                        if tempo_op.children is not None and len(tempo_op.children) == 1:
+                        if (
+                            tempo_op.children is not None
+                            and len(tempo_op.children) == 1
+                        ):
                             degree = tempo_op.children[0]
                             degree.parent = retval
                         else:
@@ -257,7 +267,10 @@ class SemanticSymbol(MathSymbol):
                 """
 
             # check ...
-            if len(op_root.children) > SemanticSymbol.MaxChildren and op_root.tag[0:2] == "U!":
+            if (
+                len(op_root.children) > SemanticSymbol.MaxChildren
+                and op_root.tag[0:2] == "U!"
+            ):
                 # too many children for a single U! node, since the order is not important, it can be split ...
                 SemanticSymbol.split_node(op_root)
 
@@ -276,7 +289,11 @@ class SemanticSymbol(MathSymbol):
 
         # tags with special handling ...
         # ... groups of elements ...
-        elif elem.tag == MathML.vector or elem.tag == MathML.list or elem.tag == MathML.set:
+        elif (
+            elem.tag == MathML.vector
+            or elem.tag == MathML.list
+            or elem.tag == MathML.set
+        ):
             subtype = "--"
             if elem.tag == MathML.vector:
                 subtype = "V-"
@@ -302,7 +319,9 @@ class SemanticSymbol(MathSymbol):
             # a matrix, check the number of rows ...
             children = list(elem)
 
-            mat_root = SemanticSymbol("M!M-" + str(len(children)) + "x", children=[], parent=parent)
+            mat_root = SemanticSymbol(
+                "M!M-" + str(len(children)) + "x", children=[], parent=parent
+            )
             # process rows, determine number of columns ...
 
             mat_rows = []
@@ -359,7 +378,9 @@ class SemanticSymbol(MathSymbol):
                 left = "C"
                 right = "C"
 
-            retval = SemanticSymbol("O!interval(" + left + "-" + right + ")", children=[], parent=parent)
+            retval = SemanticSymbol(
+                "O!interval(" + left + "-" + right + ")", children=[], parent=parent
+            )
 
             children = list(elem)
             for child in children:
@@ -367,36 +388,91 @@ class SemanticSymbol(MathSymbol):
                 # add child...
                 retval.children.append(tempo_child)
 
-
         # functions with special tags ...
-        elif elem.tag in [MathML.sin, MathML.cos, MathML.tan, MathML.cot, MathML.sec, MathML.csc,
-                          MathML.sinh, MathML.cosh, MathML.tanh, MathML.coth, MathML.sech, MathML.csch,
-                          MathML.arccos, MathML.arccot, MathML.arccsc, MathML.arcsec, MathML.arcsin, MathML.arctan,
-                          MathML.arccosh, MathML.arccoth, MathML.arccsch, MathML.arcsech, MathML.arcsinh,
-                          MathML.arctanh,
-                          MathML._abs, MathML.exp, MathML.log, MathML.ln, MathML.min, MathML.max,
-                          MathML.ceiling, MathML.floor, MathML.arg, MathML.gcd,
-                          MathML.real, MathML.imaginary]:
+        elif elem.tag in [
+            MathML.sin,
+            MathML.cos,
+            MathML.tan,
+            MathML.cot,
+            MathML.sec,
+            MathML.csc,
+            MathML.sinh,
+            MathML.cosh,
+            MathML.tanh,
+            MathML.coth,
+            MathML.sech,
+            MathML.csch,
+            MathML.arccos,
+            MathML.arccot,
+            MathML.arccsc,
+            MathML.arcsec,
+            MathML.arcsin,
+            MathML.arctan,
+            MathML.arccosh,
+            MathML.arccoth,
+            MathML.arccsch,
+            MathML.arcsech,
+            MathML.arcsinh,
+            MathML.arctanh,
+            MathML._abs,
+            MathML.exp,
+            MathML.log,
+            MathML.ln,
+            MathML.min,
+            MathML.max,
+            MathML.ceiling,
+            MathML.floor,
+            MathML.arg,
+            MathML.gcd,
+            MathML.real,
+            MathML.imaginary,
+        ]:
             retval = SemanticSymbol("F!" + short_tag, parent=parent)
 
         elif elem.tag == MathML.determinant:
             retval = SemanticSymbol("F!det", parent=parent)
 
         # unordered operators
-        elif elem.tag in [MathML.approx, MathML.eq, MathML.neq, MathML.equivalent,
-                          MathML.union, MathML.intersect,
-                          MathML.plus, MathML.times,
-                          MathML._and, MathML._or]:
+        elif elem.tag in [
+            MathML.approx,
+            MathML.eq,
+            MathML.neq,
+            MathML.equivalent,
+            MathML.union,
+            MathML.intersect,
+            MathML.plus,
+            MathML.times,
+            MathML._and,
+            MathML._or,
+        ]:
             retval = SemanticSymbol("U!" + short_tag, parent=parent)
 
-
-        elif elem.tag in [MathML.lt, MathML.gt, MathML.leq, MathML.geq,
-                          MathML.minus, MathML.divide,
-                          MathML.subset, MathML.prsubset, MathML.notsubset, MathML.notprsubset,
-                          MathML._in, MathML.notin, MathML.forall, MathML.exists, MathML.setdiff,
-                          MathML._not, MathML.implies,
-                          MathML.int, MathML.sum, MathML.partialdiff, MathML.limit,
-                          MathML.factorial, MathML.compose, MathML.root]:
+        elif elem.tag in [
+            MathML.lt,
+            MathML.gt,
+            MathML.leq,
+            MathML.geq,
+            MathML.minus,
+            MathML.divide,
+            MathML.subset,
+            MathML.prsubset,
+            MathML.notsubset,
+            MathML.notprsubset,
+            MathML._in,
+            MathML.notin,
+            MathML.forall,
+            MathML.exists,
+            MathML.setdiff,
+            MathML._not,
+            MathML.implies,
+            MathML.int,
+            MathML.sum,
+            MathML.partialdiff,
+            MathML.limit,
+            MathML.factorial,
+            MathML.compose,
+            MathML.root,
+        ]:
             retval = SemanticSymbol("O!" + short_tag, parent=parent)
 
         # special constants
@@ -420,61 +496,166 @@ class SemanticSymbol(MathSymbol):
 
             if cd == "latexml":
 
-                if content in ["annotated", "approaches-limit", "approximately-equals-or-equals",
-                               "approximately-equals-or-image-of",
-                               "assign", "asymptotically-equals", "because", "between", "binomial", "bottom",
-                               "bra", "cases", "complement", "conditional-set",
-                               "contains", "continued-fraction", "contour-integral",
-                               "coproduct", "currency-dollar", "degree", "difference-between",
-                               "dimension", "direct-product", "direct-sum", "divides", "does-not-prove",
-                               "double-integral", "double-intersection", "double-subset-of", "double-superset-of",
-                               "double-union",
-                               "equals-or-preceeds", "equals-or-succeeds", "evaluated-at",
-                               "exclusive-or", "expectation", "forces", "geometrically-equals",
-                               "greater-than-and-not-approximately-equals", "greater-than-and-not-equals",
-                               "greater-than-and-not-equivalent-to",
-                               "greater-than-or-approximately-equals", "greater-than-or-equals-or-less-than",
-                               "greater-than-or-equivalent-to", "greater-than-or-less-than",
-                               "iff", "image-of-or-approximately-equals", "infimum", "infinity",
-                               "injective-limit", "inner-product",
-                               "kernel", "ket", "left-normal-factor-semidirect-product", "left-semidirect-product",
-                               "less-than-or-approximately-equals", "less-than-or-similar-to",
-                               "limit-from", "limit-infimum", "limit-supremum", "maps-to", "minus-or-plus", "models",
-                               "much-greater-than", "much-less-than",
-                               "norm", "not-and", "not-approximately-equals", "not-contains",
-                               "not-contains-nor-equals", "not-divides",
-                               "not-equivalent-to", "not-exists", "not-forces",
-                               "not-greater-than", "not-greater-than-nor-equals", "not-greater-than-or-equals",
-                               "not-less-than", "less-than-and-not-approximately-equals", "less-than-and-not-equals",
-                               "less-than-and-not-equivalent-to", "not-less-than-nor-greater-than",
-                               "not-less-than-nor-equals", "not-less-than-or-equals",
-                               "less-than-or-equals-or-greater-than", "less-than-or-greater-than",
-                               "not-models", "not-much-greater-than", "not-much-less-than", "not-similar-to-or-equals",
-                               "not-parallel-to", "not-partial-differential", "not-perpendicular-to",
-                               "not-precedes", "not-precedes-nor-equals", "not-proves",
-                               "not-proportional-to", "not-similar-to", "not-square-image-of-or-equals",
-                               "not-subgroup-of", "not-subgroup-of-nor-equals",
-                               "not-subset-of", "not-subset-of-or-equals", "not-subset-of-nor-equals",
-                               "not-succeeds", "not-succeeds-nor-equals",
-                               "not-superset-of", "not-superset-of-nor-equals", "not-superset-of-or-equals",
-                               "not-very-much-less-than", "not-very-much-greater-than",
-                               "parallel-to", "percent", "perpendicular-to", "plus-or-minus",
-                               "precedes", "precedes-and-not-approximately-equals", "precedes-and-not-equals",
-                               "precedes-and-not-equivalent-to", "precedes-or-approximately-equals",
-                               "precedes-or-equals", "precedes-or-equivalent-to",
-                               "product", "projective-limit", "proper-intersection", "proportional-to", "proves",
-                               "quadruple-integral", "quantum-operator-product",
-                               "right-normal-factor-semidirect-product", "right-semidirect-product",
-                               "similar-to", "similar-to-or-equals",
-                               "square-image-of", "square-image-of-or-equals", "square-intersection",
-                               "square-original-of", "square-original-of-or-equals", "square-union",
-                               "succeeds", "succeeds-and-not-approximately-equals", "succeeds-and-not-equals",
-                               "succeeds-and-not-equivalent-to",
-                               "succeeds-or-approximately-equals", "succeeds-or-equals", "succeeds-or-equivalent-to",
-                               "superset-of", "superset-of-or-equals", "superset-of-and-not-equals",
-                               "supremum", "symmetric-difference",
-                               "tensor-product", "therefore", "top", "triple-integral",
-                               "very-much-greater-than", "very-much-less-than", "weierstrass-p"]:
+                if content in [
+                    "annotated",
+                    "approaches-limit",
+                    "approximately-equals-or-equals",
+                    "approximately-equals-or-image-of",
+                    "assign",
+                    "asymptotically-equals",
+                    "because",
+                    "between",
+                    "binomial",
+                    "bottom",
+                    "bra",
+                    "cases",
+                    "complement",
+                    "conditional-set",
+                    "contains",
+                    "continued-fraction",
+                    "contour-integral",
+                    "coproduct",
+                    "currency-dollar",
+                    "degree",
+                    "difference-between",
+                    "dimension",
+                    "direct-product",
+                    "direct-sum",
+                    "divides",
+                    "does-not-prove",
+                    "double-integral",
+                    "double-intersection",
+                    "double-subset-of",
+                    "double-superset-of",
+                    "double-union",
+                    "equals-or-preceeds",
+                    "equals-or-succeeds",
+                    "evaluated-at",
+                    "exclusive-or",
+                    "expectation",
+                    "forces",
+                    "geometrically-equals",
+                    "greater-than-and-not-approximately-equals",
+                    "greater-than-and-not-equals",
+                    "greater-than-and-not-equivalent-to",
+                    "greater-than-or-approximately-equals",
+                    "greater-than-or-equals-or-less-than",
+                    "greater-than-or-equivalent-to",
+                    "greater-than-or-less-than",
+                    "iff",
+                    "image-of-or-approximately-equals",
+                    "infimum",
+                    "infinity",
+                    "injective-limit",
+                    "inner-product",
+                    "kernel",
+                    "ket",
+                    "left-normal-factor-semidirect-product",
+                    "left-semidirect-product",
+                    "less-than-or-approximately-equals",
+                    "less-than-or-similar-to",
+                    "limit-from",
+                    "limit-infimum",
+                    "limit-supremum",
+                    "maps-to",
+                    "minus-or-plus",
+                    "models",
+                    "much-greater-than",
+                    "much-less-than",
+                    "norm",
+                    "not-and",
+                    "not-approximately-equals",
+                    "not-contains",
+                    "not-contains-nor-equals",
+                    "not-divides",
+                    "not-equivalent-to",
+                    "not-exists",
+                    "not-forces",
+                    "not-greater-than",
+                    "not-greater-than-nor-equals",
+                    "not-greater-than-or-equals",
+                    "not-less-than",
+                    "less-than-and-not-approximately-equals",
+                    "less-than-and-not-equals",
+                    "less-than-and-not-equivalent-to",
+                    "not-less-than-nor-greater-than",
+                    "not-less-than-nor-equals",
+                    "not-less-than-or-equals",
+                    "less-than-or-equals-or-greater-than",
+                    "less-than-or-greater-than",
+                    "not-models",
+                    "not-much-greater-than",
+                    "not-much-less-than",
+                    "not-similar-to-or-equals",
+                    "not-parallel-to",
+                    "not-partial-differential",
+                    "not-perpendicular-to",
+                    "not-precedes",
+                    "not-precedes-nor-equals",
+                    "not-proves",
+                    "not-proportional-to",
+                    "not-similar-to",
+                    "not-square-image-of-or-equals",
+                    "not-subgroup-of",
+                    "not-subgroup-of-nor-equals",
+                    "not-subset-of",
+                    "not-subset-of-or-equals",
+                    "not-subset-of-nor-equals",
+                    "not-succeeds",
+                    "not-succeeds-nor-equals",
+                    "not-superset-of",
+                    "not-superset-of-nor-equals",
+                    "not-superset-of-or-equals",
+                    "not-very-much-less-than",
+                    "not-very-much-greater-than",
+                    "parallel-to",
+                    "percent",
+                    "perpendicular-to",
+                    "plus-or-minus",
+                    "precedes",
+                    "precedes-and-not-approximately-equals",
+                    "precedes-and-not-equals",
+                    "precedes-and-not-equivalent-to",
+                    "precedes-or-approximately-equals",
+                    "precedes-or-equals",
+                    "precedes-or-equivalent-to",
+                    "product",
+                    "projective-limit",
+                    "proper-intersection",
+                    "proportional-to",
+                    "proves",
+                    "quadruple-integral",
+                    "quantum-operator-product",
+                    "right-normal-factor-semidirect-product",
+                    "right-semidirect-product",
+                    "similar-to",
+                    "similar-to-or-equals",
+                    "square-image-of",
+                    "square-image-of-or-equals",
+                    "square-intersection",
+                    "square-original-of",
+                    "square-original-of-or-equals",
+                    "square-union",
+                    "succeeds",
+                    "succeeds-and-not-approximately-equals",
+                    "succeeds-and-not-equals",
+                    "succeeds-and-not-equivalent-to",
+                    "succeeds-or-approximately-equals",
+                    "succeeds-or-equals",
+                    "succeeds-or-equivalent-to",
+                    "superset-of",
+                    "superset-of-or-equals",
+                    "superset-of-and-not-equals",
+                    "supremum",
+                    "symmetric-difference",
+                    "tensor-product",
+                    "therefore",
+                    "top",
+                    "triple-integral",
+                    "very-much-greater-than",
+                    "very-much-less-than",
+                    "weierstrass-p",
+                ]:
                     retval = SemanticSymbol("O!" + content, parent=parent)
 
                 elif content == "absent":
@@ -543,9 +724,16 @@ class SemanticSymbol(MathSymbol):
             # contiguous "unknown" csymbol....
             pos = 0
             while pos + 1 < len(retval.children):
-                if retval.children[pos].tag[0:2] in ["-!", "T!"] and retval.children[pos + 1].tag[0:2] == "-!":
+                if (
+                    retval.children[pos].tag[0:2] in ["-!", "T!"]
+                    and retval.children[pos + 1].tag[0:2] == "-!"
+                ):
                     # combine ... change to text ...
-                    retval.children[pos].tag = "T!" + retval.children[pos].tag[2:] + retval.children[pos + 1].tag[2:]
+                    retval.children[pos].tag = (
+                        "T!"
+                        + retval.children[pos].tag[2:]
+                        + retval.children[pos + 1].tag[2:]
+                    )
                     # remove next ...
                     del retval.children[pos + 1]
                 else:
@@ -556,10 +744,17 @@ class SemanticSymbol(MathSymbol):
                 # too many children for a single E! node, split ...
                 SemanticSymbol.split_node(retval)
 
-        if (isinstance(retval, SemanticSymbol) and retval.children is not None and
-                len(retval.children) > SemanticSymbol.MaxChildren):
-            raise Exception("Node exceeds maximum number of childreen allowed (" +
-                            str(SemanticSymbol.MaxChildren) + ") - " + str(len(retval.children)))
+        if (
+            isinstance(retval, SemanticSymbol)
+            and retval.children is not None
+            and len(retval.children) > SemanticSymbol.MaxChildren
+        ):
+            raise Exception(
+                "Node exceeds maximum number of childreen allowed ("
+                + str(SemanticSymbol.MaxChildren)
+                + ") - "
+                + str(len(retval.children))
+            )
 
         return retval
 
@@ -570,8 +765,12 @@ class SemanticSymbol(MathSymbol):
             mid_point = math_tan.ceil(len(node.children) / 2.0)
 
             # create new parents ...
-            left_child = SemanticSymbol(node.tag, children=node.children[:mid_point], parent=node)
-            right_child = SemanticSymbol(node.tag, children=node.children[mid_point:], parent=node)
+            left_child = SemanticSymbol(
+                node.tag, children=node.children[:mid_point], parent=node
+            )
+            right_child = SemanticSymbol(
+                node.tag, children=node.children[mid_point:], parent=node
+            )
 
             # link children (now grand-children to their new parents)
             for child in left_child.children:
@@ -601,22 +800,22 @@ class SemanticSymbol(MathSymbol):
         Build string representation of symbol
         """
 
-        builder.append('[')
+        builder.append("[")
         builder.append(self.tag)
 
         if self.children is not None:
             for idx, child in enumerate(self.children):
                 rel_type = SemanticSymbol.idx_rel_type(idx)
-                builder.append(',' + rel_type)
+                builder.append("," + rel_type)
                 child.build_str(builder)
 
-        builder.append(']')
+        builder.append("]")
 
     def tostring(self):  # added to print out tree (FWT)
         str = []
         self.build_str(str)
 
-        return ''.join(str)
+        return "".join(str)
 
     def is_semantic(self):
         return True
@@ -640,8 +839,18 @@ class SemanticSymbol(MathSymbol):
         else:
             return False
 
-    def get_dot_strings(self, prefix, rank_strings, node_names, node_strings, link_strings,
-                        highlight=None, unified=None, wildcard=None, generic=False):
+    def get_dot_strings(
+        self,
+        prefix,
+        rank_strings,
+        node_names,
+        node_strings,
+        link_strings,
+        highlight=None,
+        unified=None,
+        wildcard=None,
+        generic=False,
+    ):
 
         current_id = len(node_names)
         is_cluster = self.tag[0:2] == "M!"
@@ -773,11 +982,11 @@ class SemanticSymbol(MathSymbol):
 
             # create a subgraph starting with the within node as root
             cluster_str = "subgraph cluster" + str(current_id) + " {\n"
-            cluster_str += " style= \"" + style + "\";\n"
-            cluster_str += " color= \"" + color + "\";\n"
-            cluster_str += " fontcolor= \"" + fontcolor + "\";\n"
-            cluster_str += " label=\"" + node_label + "\";\n"
-            cluster_str += " rankdir=\"LR\";\n"
+            cluster_str += ' style= "' + style + '";\n'
+            cluster_str += ' color= "' + color + '";\n'
+            cluster_str += ' fontcolor= "' + fontcolor + '";\n'
+            cluster_str += ' label="' + node_label + '";\n'
+            cluster_str += ' rankdir="LR";\n'
 
             # generate sub-graph from the children within ...
             child_n_strings = []
@@ -785,8 +994,17 @@ class SemanticSymbol(MathSymbol):
 
             for idx, child in enumerate(self.children):
                 rel_type = SemanticSymbol.idx_rel_type(idx)
-                child_info = child.get_dot_strings(prefix + rel_type, rank_strings, node_names, child_n_strings,
-                                                   child_l_strings, highlight, unified, wildcard, generic)
+                child_info = child.get_dot_strings(
+                    prefix + rel_type,
+                    rank_strings,
+                    node_names,
+                    child_n_strings,
+                    child_l_strings,
+                    highlight,
+                    unified,
+                    wildcard,
+                    generic,
+                )
 
                 child_id, child_cluster, child_head_id, child_tail = child_info
                 child_tail_id, child_tail_depth = child_tail
@@ -817,13 +1035,31 @@ class SemanticSymbol(MathSymbol):
             # create node string
             if use_filled_style:
                 # fill style nodes....
-                style_str = "style=\"" + style + "\" fillcolor=\"" + fillcolor + "\" fontcolor=\"" + fontcolor + "\""
+                style_str = (
+                    'style="'
+                    + style
+                    + '" fillcolor="'
+                    + fillcolor
+                    + '" fontcolor="'
+                    + fontcolor
+                    + '"'
+                )
             else:
-                style_str = "style=\"" + style + "\" color=\"" + color + "\" fontcolor=\"" + fontcolor + "\""
+                style_str = (
+                    'style="'
+                    + style
+                    + '" color="'
+                    + color
+                    + '" fontcolor="'
+                    + fontcolor
+                    + '"'
+                )
 
             if peripheries > 1:
-                style_str += " peripheries=\"2\""
-            current_str = node_name + "[label=\"" + node_label + "\" " + style_str + "];\n"
+                style_str += ' peripheries="2"'
+            current_str = (
+                node_name + '[label="' + node_label + '" ' + style_str + "];\n"
+            )
 
             # add node
             node_strings.append(current_str)
@@ -836,9 +1072,17 @@ class SemanticSymbol(MathSymbol):
                 relation = SemanticSymbol.idx_rel_type(idx)
 
                 # call recursively ...
-                child_info = child.get_dot_strings(prefix + relation, rank_strings, node_names, node_strings,
-                                                   link_strings,
-                                                   highlight, unified, wildcard, generic)
+                child_info = child.get_dot_strings(
+                    prefix + relation,
+                    rank_strings,
+                    node_names,
+                    node_strings,
+                    link_strings,
+                    highlight,
+                    unified,
+                    wildcard,
+                    generic,
+                )
                 child_id, child_cluster, child_head_id, child_tail = child_info
                 child_tail_id, child_tail_depth = child_tail
 
@@ -859,10 +1103,29 @@ class SemanticSymbol(MathSymbol):
 
                 # source is node ...
                 if child_cluster:
-                    child_link = node_name + " -> " + child_name + " [label=\"" + relationLabel + "\", lhead=\"cluster" + \
-                                 str(child_id) + "\"" + modificationString + " ];\n"
+                    child_link = (
+                        node_name
+                        + " -> "
+                        + child_name
+                        + ' [label="'
+                        + relationLabel
+                        + '", lhead="cluster'
+                        + str(child_id)
+                        + '"'
+                        + modificationString
+                        + " ];\n"
+                    )
                 else:
-                    child_link = node_name + " -> " + child_name + " [label=\"" + relationLabel + "\"" + modificationString + " ];\n"
+                    child_link = (
+                        node_name
+                        + " -> "
+                        + child_name
+                        + ' [label="'
+                        + relationLabel
+                        + '"'
+                        + modificationString
+                        + " ];\n"
+                    )
 
                 link_strings.append(child_link)
 
@@ -908,13 +1171,18 @@ class SemanticSymbol(MathSymbol):
                 if short_locs and len(rel_path) > 5:
                     rel_path = self.rlencode(rel_path)
 
-                return self.tag, right.tag, rel_path, location  # this is the tuple format for Version 0.3
+                return (
+                    self.tag,
+                    right.tag,
+                    rel_path,
+                    location,
+                )  # this is the tuple format for Version 0.3
 
             return helper
 
         if short_locs:
             if len(prefix) == 0:
-                loc = '-'
+                loc = "-"
             elif len(prefix) > 5:
                 loc = self.rlencode(prefix)
             else:
@@ -937,13 +1205,20 @@ class SemanticSymbol(MathSymbol):
                     # ordered label ....
                     label = SemanticSymbol.idx_rel_type(child_idx)
 
-                ret.extend(filter(lambda x: x is not None, map(mk_helper(loc), child.get_symbols(label, window))))
+                ret.extend(
+                    filter(
+                        lambda x: x is not None,
+                        map(mk_helper(loc), child.get_symbols(label, window)),
+                    )
+                )
                 ret.extend(child.get_pairs(prefix + label, window, eob, short_locs))
 
         return ret
 
     def get_symbols(self, label, window):
-        return SemanticSymbolIterator(self, label, window, SemanticSymbol.CommutativePairs)
+        return SemanticSymbolIterator(
+            self, label, window, SemanticSymbol.CommutativePairs
+        )
 
 
 class SemanticSymbolIterator(object):
@@ -952,7 +1227,7 @@ class SemanticSymbolIterator(object):
     """
 
     def __init__(self, node, prefix, window, commutative_pairs):
-        self.stack = [(node, '')] if node else []
+        self.stack = [(node, "")] if node else []
         self.prefix = prefix
         self.window = window
         self.commutative_pairs = commutative_pairs
@@ -964,8 +1239,10 @@ class SemanticSymbolIterator(object):
         if len(self.stack) < 1:
             raise StopIteration
 
-        (elem, path) = self.stack.pop()
-        if elem.children and (not self.window or len(self.prefix) + len(path) < self.window):
+        elem, path = self.stack.pop()
+        if elem.children and (
+            not self.window or len(self.prefix) + len(path) < self.window
+        ):
             for child_idx, child in enumerate(elem.children):
                 if self.commutative_pairs and elem.tag[0] == "U":
                     # use un-ordered label ....

@@ -14,19 +14,20 @@ Adapted for multirag formula_search module:
   - Updated to use relative imports
 """
 
-import sys
-import re
 import io
+import re
+import sys
 import xml.etree.ElementTree
+
 from bs4 import BeautifulSoup
 
+from multirag.formula_search.exceptions import UnknownTagException
+from multirag.formula_search.latex_mml import LatexToMathML
 from multirag.formula_search.layout_symbol import LayoutSymbol
 from multirag.formula_search.semantic_symbol import SemanticSymbol
 from multirag.formula_search.symbol_tree import SymbolTree
-from multirag.formula_search.latex_mml import LatexToMathML
-from multirag.formula_search.exceptions import UnknownTagException
 
-__author__ = 'Nidhin, FWTompa, KDavila'
+__author__ = "Nidhin, FWTompa, KDavila"
 
 
 class MathExtractor:
@@ -51,20 +52,28 @@ class MathExtractor:
         parsed_xml = BeautifulSoup(tree, "lxml")
 
         math_root = parsed_xml.find("math")  # namespaces have been removed (FWT)
-        application_tex = math_root.find("annotation", {"encoding": "application/x-tex"})
+        application_tex = math_root.find(
+            "annotation", {"encoding": "application/x-tex"}
+        )
 
         if application_tex:
             application_tex.decompose()
 
-        pmml_markup = math_root.find("annotation-xml", {"encoding": "MathML-Presentation"})
+        pmml_markup = math_root.find(
+            "annotation-xml", {"encoding": "MathML-Presentation"}
+        )
         if pmml_markup:
             pmml_markup.name = "math"
         else:
             pmml_markup = math_root
-            cmml_markup = math_root.find("annotation-xml", {"encoding": "MathML-Content"})
+            cmml_markup = math_root.find(
+                "annotation-xml", {"encoding": "MathML-Content"}
+            )
             if cmml_markup:
                 cmml_markup.decompose()  # delete any Content MML
-        pmml_markup['xmlns'] = "http://www.w3.org/1998/Math/MathML"  # set the default namespace
+        pmml_markup["xmlns"] = (
+            "http://www.w3.org/1998/Math/MathML"  # set the default namespace
+        )
         return str(pmml_markup)
 
     @classmethod
@@ -80,7 +89,9 @@ class MathExtractor:
         parsed_xml = BeautifulSoup(tree, "lxml")
 
         math_root = parsed_xml.find("math")  # namespaces have been removed (FWT)
-        application_tex = math_root.find("annotation", {"encoding": "application/x-tex"})
+        application_tex = math_root.find(
+            "annotation", {"encoding": "application/x-tex"}
+        )
 
         if application_tex:
             application_tex.decompose()
@@ -90,11 +101,15 @@ class MathExtractor:
             cmml_markup.name = "math"
         else:
             cmml_markup = math_root
-            pmml_markup = math_root.find("annotation-xml", {"encoding": "MathML-Presentation"})
+            pmml_markup = math_root.find(
+                "annotation-xml", {"encoding": "MathML-Presentation"}
+            )
             if pmml_markup:
                 pmml_markup.decompose()  # delete any Presentation MML
 
-        cmml_markup['xmlns'] = "http://www.w3.org/1998/Math/MathML"  # set the default namespace
+        cmml_markup["xmlns"] = (
+            "http://www.w3.org/1998/Math/MathML"  # set the default namespace
+        )
         return str(cmml_markup)
 
     @classmethod

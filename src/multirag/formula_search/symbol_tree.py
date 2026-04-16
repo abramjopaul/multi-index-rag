@@ -8,20 +8,21 @@ Original authors: Nidhin Pattaniyil, Frank Wm. Tompa, Kenny Davila Castellanos
 Adapted for multirag formula_search module with relative imports
 """
 
+import sys
 ##import pickle
 ##import requests as req
 import xml.etree.ElementTree as ET
 from collections import Counter
-import sys
 
 from multirag.formula_search.layout_symbol import LayoutSymbol
 from multirag.formula_search.semantic_symbol import SemanticSymbol
 
-ET.register_namespace('', 'http://www.w3.org/1998/Math/MathML')
+ET.register_namespace("", "http://www.w3.org/1998/Math/MathML")
 
-__author__ = 'Nidhin, FWTompa, KDavila'
+__author__ = "Nidhin, FWTompa, KDavila"
 
 ST_MAX_RECUSION_DEPTH = 2500
+
 
 class SymbolTree:
     """
@@ -31,7 +32,7 @@ class SymbolTree:
 
     """
 
-    __slots__ = ['root', 'document', 'position', 'xml_root']
+    __slots__ = ["root", "document", "position", "xml_root"]
 
     def __init__(self, root, document=None, position=None, xml_root=None):
         self.root = root
@@ -57,21 +58,19 @@ class SymbolTree:
         """
 
         pairs = []
-        for s1, s2, relationship, location in self.root.get_pairs('', window, eob):
-            p='\t'.join([s1, s2, relationship, location])
-            if not (len(p)>200):
+        for s1, s2, relationship, location in self.root.get_pairs("", window, eob):
+            p = "\t".join([s1, s2, relationship, location])
+            if not (len(p) > 200):
                 pairs.append(p)
             else:
-                print("pair "+ p +"is longer than 200 characters" , file=sys.stderr)
+                print("pair " + p + "is longer than 200 characters", file=sys.stderr)
         return pairs
 
-##    def get_symbols(self):
-##        return self.root.get_symbols()
+    ##    def get_symbols(self):
+    ##        return self.root.get_symbols()
 
-
-    def tostring(self): # added to get printable version of tree (FWT)
+    def tostring(self):  # added to get printable version of tree (FWT)
         return self.root.tostring() if self.root else ""
-
 
     @classmethod
     def parse_from_opt(cls, tree_string):
@@ -103,7 +102,7 @@ class SymbolTree:
                 # get child ...
                 child_relation = tree_substring[pos + 1]
                 child_end = cls.__find_matching_bracket(tree_substring, pos + 2)
-                child_text = tree_substring[(pos + 2):child_end]
+                child_text = tree_substring[(pos + 2) : child_end]
                 pos = child_end
 
                 child_node = cls.__create_opt_from_string(child_text)
@@ -119,8 +118,7 @@ class SymbolTree:
 
         return root
 
-
-    #added by KMD for parsing from SLT tree strings
+    # added by KMD for parsing from SLT tree strings
     @classmethod
     def parse_from_slt(cls, tree_string):
         # Allow very depth trees...
@@ -134,20 +132,20 @@ class SymbolTree:
 
     @classmethod
     def __create_slt_from_string(cls, tree_substring):
-        #assume first and last characters are [ and ]
-        #read name until , [, or ] appears
-        #print("sub: " + tree_substring)
+        # assume first and last characters are [ and ]
+        # read name until , [, or ] appears
+        # print("sub: " + tree_substring)
 
         pos = 1
         while not tree_substring[pos] in ["[", "]"]:
             if tree_substring[pos] == "," and pos > 1:
                 break
 
-            if tree_substring[pos:pos + 2] == "M!":
-                #special case of matrices...
+            if tree_substring[pos : pos + 2] == "M!":
+                # special case of matrices...
                 pos += 2
             else:
-                #everything else
+                # everything else
                 pos += 1
 
         label = tree_substring[1:pos]
@@ -161,10 +159,10 @@ class SymbolTree:
         current_pre_below = None
         current_element = None
 
-        #check the case...
+        # check the case...
         while tree_substring[pos] != "]":
             if tree_substring[pos] == "[":
-                #child next...
+                # child next...
                 child_end = cls.__find_matching_bracket(tree_substring, pos)
                 child_text = tree_substring[pos:child_end]
                 pos = child_end
@@ -172,10 +170,10 @@ class SymbolTree:
                 current_next = cls.__create_slt_from_string(child_text)
 
             if tree_substring[pos] == ",":
-                #child other than next...
+                # child other than next...
                 child_relation = tree_substring[pos + 1]
                 child_end = cls.__find_matching_bracket(tree_substring, pos + 2)
-                child_text = tree_substring[(pos + 2):child_end]
+                child_text = tree_substring[(pos + 2) : child_end]
                 pos = child_end
 
                 child_node = cls.__create_slt_from_string(child_text)
@@ -199,15 +197,23 @@ class SymbolTree:
                 else:
                     print("Invalid child relation found: " + child_relation)
 
-
-        root = LayoutSymbol(label, current_next, current_above, current_below, current_over, current_under,
-                          current_within, current_pre_above, current_pre_below, current_element)
+        root = LayoutSymbol(
+            label,
+            current_next,
+            current_above,
+            current_below,
+            current_over,
+            current_under,
+            current_within,
+            current_pre_above,
+            current_pre_below,
+            current_element,
+        )
         if tree_substring != root.tostring():
             print("Mismatch: " + tree_substring + " -> " + root.tostring(), flush=True)
             exit(1)
 
         return root
-
 
     @classmethod
     def __find_matching_bracket(cls, tree_substring, offset):
@@ -229,7 +235,9 @@ class SymbolTree:
 
         return pos
 
-    def get_dot_string(self, highlight=None, unified=None, wildcard=None, generic=False):
+    def get_dot_string(
+        self, highlight=None, unified=None, wildcard=None, generic=False
+    ):
         header = """digraph expression{
             rankdir=\"LR\";
             compound=true; edge [arrowhead=none];
@@ -240,21 +248,38 @@ class SymbolTree:
         node_strings = []
         edge_strings = []
 
-        self.root.get_dot_strings('', rank_strings, node_names, node_strings, edge_strings,
-                                  highlight, unified, wildcard, generic)
-        content = " ".join(rank_strings) + " ".join(node_strings) + " ".join(edge_strings)
+        self.root.get_dot_strings(
+            "",
+            rank_strings,
+            node_names,
+            node_strings,
+            edge_strings,
+            highlight,
+            unified,
+            wildcard,
+            generic,
+        )
+        content = (
+            " ".join(rank_strings) + " ".join(node_strings) + " ".join(edge_strings)
+        )
 
         footer = "}\n"
         final = header + content + footer
 
-        #print(final)
+        # print(final)
 
         return final
 
-    def save_as_dot(self, output_filename, highlight=None, unified=None, wildcard=None, generic=False):
+    def save_as_dot(
+        self,
+        output_filename,
+        highlight=None,
+        unified=None,
+        wildcard=None,
+        generic=False,
+    ):
         dot_str = self.get_dot_string(highlight, unified, wildcard, generic)
 
         out = open(output_filename, "w")
         out.write(dot_str)
         out.close()
-

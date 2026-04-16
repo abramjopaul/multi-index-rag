@@ -72,7 +72,8 @@ class RunConfig(BaseModel):
         default=None, ge=1, description="Optional corpus size limit for indexing"
     )
     force_rebuild: bool = Field(
-        default=False, description="Force rebuild of index (default: reuse existing index)"
+        default=False,
+        description="Force rebuild of index (default: reuse existing index)",
     )
     experiment_name: str | None = Field(
         default=None, description="W&B experiment grouping (defaults to run_name)"
