@@ -1,5 +1,4 @@
-# Retrieval-Augmented Generation with Text–Symbolic Formula Indexing for Scientific Papers
-
+# Formula-aware Retrieval-Augmented Generation
 > Master's Thesis — Web and Data Science, Universität Koblenz  
 > Author: Abram Jopaul | Supervisor: Prof. Dr. Ralf Lämmel | Co-Supervisor: Susanne Göbel
 

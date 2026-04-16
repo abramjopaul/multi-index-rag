@@ -1,0 +1,40 @@
+# Formula Indexing Configuration
+# Controls data scope, representation type, FastText training, and I/O paths
+
+# Data Scope Limiting
+# Use these to control how many formulas are processed (for testing vs full pipeline)
+data_scope:
+  max_formulas: null              # Max formulas to process (null = all ~2.3M)
+                                  # Set to 10000 for quick testing (~30 sec)
+                                  # Set to 100000 for medium run (~3 min)
+  sample_rate: 1.0                # Fraction of formulas to use (0.0-1.0)
+                                  # 0.1 = 10% sampling
+  skip_first_n: 0                 # Skip first N formulas (for sequential testing)
+
+# Formula Representation
+representation:
+  type: 'slt'                     # Options: 'slt', 'opt', 'combined'
+                                  # SLT = Symbol Layout Tree (visual structure)
+                                  # OPT = Operator Tree (semantic structure)
+                                  # combined = both (average embeddings)
+  tokenization_mode: 'both_separated'  # Options: 'value', 'type', 'both_separated', 'both_combined'
+                                       # Specifies how to encode tuple elements for FastText
+
+# FastText Embedding Model Configuration
+# These are standard parameters from TangentCFT paper - modify for experimentation
+fasttext:
+  vector_size: 300               # Embedding dimension (TangentCFT standard)
+  window: 5                      # Context window for tuple pair extraction
+  min_count: 2                   # Ignore tuples appearing < N times
+  epochs: 30                     # Training iterations (reduce to 5 for quick tests)
+  negative: 20                   # Negative samples per training example
+  workers: 4                     # Parallel threads for training
+  seed: 42                       # Random seed for reproducibility
+
+# File Paths (relative to project root)
+paths:
+  formula_corpus_tsv: 'data/raw/collection/formula/latex_representation_v3/'
+  output_corpus_csv: 'data/processed/formula_corpus.csv'
+  model_path: 'data/indices/formula_models/'
+  index_path: 'data/indices/formula/'
+  encoder_maps_path: 'data/indices/formula_models/encoder_maps.pkl'
