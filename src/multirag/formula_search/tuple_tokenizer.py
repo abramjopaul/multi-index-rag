@@ -153,7 +153,7 @@ class TupleTokenizer:
         token_id_manager: TokenIDManager,
         embedding_type: TupleTokenizationMode = TupleTokenizationMode.Both_Separated,
         tokenize_all: bool = False,
-        tokenize_number: bool = True,
+        tokenize_number: bool = False,
     ):
         """
         Initialize TupleTokenizer.

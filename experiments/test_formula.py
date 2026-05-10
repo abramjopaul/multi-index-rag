@@ -34,28 +34,28 @@ latex_formula = r"x - y^2 = 0"
 # token_ids = [ord(c) for c in test_encoded]
 # print(f"Token IDs: {token_ids}")
 
-print("\n" + "=" * 70)
-print("STARTING FORMULA TRAINING WITH TIMING")
-print("=" * 70 + "\n")
+# print("\n" + "=" * 70)
+# print("STARTING FORMULA TRAINING WITH TIMING")
+# print("=" * 70 + "\n")
 
-start_time = time.time()
+# start_time = time.time()
 
-trainer = FormulaTrainer(tree_type="OPT", use_process_pool=True, num_workers=8)
+trainer = FormulaTrainer(tree_type="SLT-TYPE", use_process_pool=True, num_workers=8)
 model = trainer.train(
     file_numbers=[1, 2, 3],
     num_formulas=500,
     formula_column="formula",
 )
 
-end_time = time.time()
-elapsed_time = end_time - start_time
+# end_time = time.time()
+# elapsed_time = end_time - start_time
 
-print("\n" + "=" * 70)
-print(f"TRAINING TIME: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
-print("=" * 70 + "\n")
+# print("\n" + "=" * 70)
+# print(f"TRAINING TIME: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
+# print("=" * 70 + "\n")
 
 model = trainer.load_model(
-    "/Users/abramjopaul/Documents/projects/multi-index-rag/data/formula-indexing/fasttext/fasttext_model_slt.bin"
+    "/Users/abramjopaul/Documents/projects/multi-index-rag/data/formula-indexing/fasttext/fasttext_model_slt_type.bin"
 )
-print(np.shape(model.wv["\uea60\uea61\uea60\uea63ǴǴ"]))
+print(model.wv["hi"])
 print(model)
