@@ -1,7 +1,7 @@
 # Example run configuration for W&B logging
 # Rename and modify this file for different runs
 
-run_name: "bm25_sparse_baseline"  # Used for W&B run name and grouping
+run_name: "bm25_baseline"  # Used for W&B run name and grouping
 index_type: "sparse"
 
 # Retrieval parameters

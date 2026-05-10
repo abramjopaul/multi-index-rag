@@ -10,6 +10,7 @@ import multiprocessing
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
+import numpy as np
 import pandas as pd
 from gensim.models import FastText
 from gensim.models.callbacks import CallbackAny2Vec
@@ -100,8 +101,8 @@ class FormulaTrainer:
 
     def __init__(
         self,
-        tree_type: Literal["SLT", "OPT"] = "SLT",
-        embedding_type: TupleTokenizationMode = TupleTokenizationMode.Both_Separated,
+        tree_type: Literal["SLT", "OPT", "SLT-TYPE"] = "SLT",
+        embedding_type: Optional[TupleTokenizationMode] = None,
         vector_size: int = 200,
         window: int = 5,
         min_n: int = 1,
@@ -110,13 +111,17 @@ class FormulaTrainer:
         output_dir: Optional[str] = None,
         use_process_pool: bool = True,
         num_workers: Optional[int] = 4,
+        tokenize_number: Optional[bool] = None,
     ):
         """
         Initialize FormulaTrainer.
 
         Args:
-            tree_type: "SLT" (Symbol Layout Tree) or "OPT" (Operator Tree)
-            embedding_type: Node tokenization mode (default: Both_Separated)
+            tree_type: "SLT" (Symbol Layout Tree), "OPT" (Operator Tree), or "SLT-TYPE" (SLT type-only)
+            embedding_type: Node tokenization mode
+                - None (auto): Both_Separated for SLT/OPT, Type for SLT-TYPE
+                - Type: Extract only node types (for SLT-TYPE or custom)
+                - Both_Separated: Extract type and value separately (for SLT/OPT)
             vector_size: FastText vector dimension (default: 200)
             window: Context window size (default: 5)
             min_n: Minimum n-gram size (default: 2)
@@ -125,18 +130,40 @@ class FormulaTrainer:
             output_dir: Output directory (default: data/formula-indexing)
             use_process_pool: Use process pool for parallel LaTeX to MathML conversion (default: True)
             num_workers: Number of worker processes (default: 4, None = auto-tune)
+            tokenize_number: Whether to split numeric values into individual digits
+                - None (auto): True for SLT, False for OPT/SLT-TYPE
+                - SLT (True): Layout cares about digit positioning
+                - OPT (False): Operations care about number identity
         """
         self.tree_type = tree_type.upper()
-        if self.tree_type not in {"SLT", "OPT"}:
-            raise ValueError(f"tree_type must be SLT or OPT, got {tree_type}")
+        if self.tree_type not in {"SLT", "OPT", "SLT-TYPE"}:
+            raise ValueError(f"tree_type must be SLT, OPT, or SLT-TYPE, got {tree_type}")
 
-        self.embedding_type = embedding_type
+        # Auto-configure embedding_type based on tree_type if not provided
+        if embedding_type is None:
+            if self.tree_type == "SLT-TYPE":
+                self.embedding_type = TupleTokenizationMode.Type
+            else:  # SLT or OPT
+                self.embedding_type = TupleTokenizationMode.Both_Separated
+        else:
+            self.embedding_type = embedding_type
+        
         self.vector_size = vector_size
         self.window = window
         self.min_n = min_n
         self.max_n = max_n
         self.negative = negative
         self.use_process_pool = use_process_pool
+
+        # Set tokenize_number based on tree_type if not explicitly provided
+        if tokenize_number is None:
+            self.tokenize_number = self.tree_type == "SLT"  # True for SLT, False for OPT/SLT-TYPE
+        else:
+            self.tokenize_number = tokenize_number
+        
+        logger.info(
+            f"Initialized with tree_type={self.tree_type}, embedding_type={self.embedding_type.name}, tokenize_number={self.tokenize_number}"
+        )
 
         # Auto-tune num_workers based on CPU count if not provided
         if num_workers is None:
@@ -154,15 +181,13 @@ class FormulaTrainer:
         self.output_dir = FORMULA_INDEX_DIR
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Artifact paths
-        self.encoder_maps_path = self.output_dir / "encoder_maps.tsv"
-        self.corpus_path = FASTTEXT_MODEL_DIR / "corpus.txt"  # LineSentence format
-        self.model_path = (
-            FASTTEXT_MODEL_DIR / f"fasttext_model_{self.tree_type.lower()}.bin"
-        )
-        self.metadata_path = (
-            FASTTEXT_MODEL_DIR / f"training_metadata_{self.tree_type.lower()}.json"
-        )
+        # Artifact paths (use lowercase tree_type with hyphens replaced by underscores)
+        tree_type_suffix = self.tree_type.lower().replace("-", "_")
+        self.encoder_maps_path = self.output_dir / f"encoder_maps_{tree_type_suffix}.tsv"
+        self.corpus_path = FASTTEXT_MODEL_DIR / f"corpus_{tree_type_suffix}.txt"  # LineSentence format
+        self.model_path = FASTTEXT_MODEL_DIR / f"fasttext_model_{tree_type_suffix}.bin"
+        self.metadata_path = FASTTEXT_MODEL_DIR / f"training_metadata_{tree_type_suffix}.json"
+        self.checkpoint_path = FASTTEXT_MODEL_DIR / f"checkpoint_{tree_type_suffix}.json"  # Batch training checkpoint
 
         # Initialize generators and tokenizer
         self.slt_generator = SLTGenerator()
@@ -172,7 +197,8 @@ class FormulaTrainer:
         self.token_id_manager = TokenIDManager()
         self.tuple_tokenizer = TupleTokenizer(
             token_id_manager=self.token_id_manager,
-            embedding_type=embedding_type,
+            embedding_type=self.embedding_type,
+            tokenize_number=self.tokenize_number,
         )
 
         self.model: Optional[FastText] = None
@@ -184,6 +210,8 @@ class FormulaTrainer:
         self,
         file_numbers: Optional[List[int]] = None,
         num_formulas: Optional[int] = None,
+        start_file_number: Optional[int] = None,
+        start_file_row_index: int = 0,
     ) -> pd.DataFrame:
         """
         Load LaTeX formulas from TSV files in latex_representation_v3 directory.
@@ -193,6 +221,9 @@ class FormulaTrainer:
                          If None, loads all files.
             num_formulas: Maximum number of formulas to load across all files.
                          If None, loads everything.
+            start_file_number: Resume from specific file number (for batch training).
+                             If provided, starts from this file and skips file_numbers parameter.
+            start_file_row_index: Row index within start_file_number to begin from (default: 0).
 
         Returns:
             DataFrame with loaded formulas
@@ -200,6 +231,8 @@ class FormulaTrainer:
         Example:
             >>> trainer = FormulaTrainer(tree_type="SLT")
             >>> df = trainer.load_latex_formulas(file_numbers=[1, 2], num_formulas=5000)
+            >>> # Resume from middle of file 4:
+            >>> df = trainer.load_latex_formulas(start_file_number=4, start_file_row_index=150, num_formulas=10000)
         """
         latex_dir = LATEX_REPRESENTATION
         if not latex_dir.exists():
@@ -210,7 +243,13 @@ class FormulaTrainer:
         logger.info(f"Loading LaTeX formulas from {latex_dir}")
 
         # Determine which files to load
-        if file_numbers is None:
+        if start_file_number is not None:
+            # Resume from specific file number (for batch training)
+            all_files = sorted(list(latex_dir.glob("*.tsv")), key=lambda x: int(x.stem))
+            file_nums = [int(f.stem) for f in all_files]
+            start_idx = file_nums.index(start_file_number) if start_file_number in file_nums else 0
+            files = all_files[start_idx:]
+        elif file_numbers is None:
             # Load all files
             files = sorted(list(latex_dir.glob("*.tsv")), key=lambda x: int(x.stem))
         else:
@@ -231,6 +270,7 @@ class FormulaTrainer:
 
         all_formulas = []
         total_loaded = 0
+        is_first_file = True
 
         with tqdm(
             total=num_formulas or sum(1 for f in files),
@@ -243,6 +283,14 @@ class FormulaTrainer:
 
                 try:
                     df = pd.read_csv(file_path, sep="\t", dtype=str)
+
+                    # Skip rows if resuming from middle of file
+                    if is_first_file and start_file_row_index > 0:
+                        df = df.iloc[start_file_row_index:]
+                        logger.info(f"Resuming from row {start_file_row_index} in {file_path.name}")
+                        is_first_file = False
+                    elif is_first_file:
+                        is_first_file = False
 
                     # Limit if needed
                     if num_formulas:
@@ -275,6 +323,8 @@ class FormulaTrainer:
         """
         Generate tuples from LaTeX formula using SLT or OPT.
 
+        Note: SLT-TYPE also uses SLT tree generation, with Type-only tokenization.
+
         Args:
             latex: LaTeX formula string
 
@@ -282,10 +332,10 @@ class FormulaTrainer:
             List of tab-separated tuples (or empty list if failed)
         """
         try:
-            if self.tree_type == "SLT":
-                tree = self.slt_generator.generate(latex)
-            else:  # OPT
+            if self.tree_type == "OPT":
                 tree = self.opt_generator.generate(latex)
+            else:  # SLT or SLT-TYPE both use SLT trees
+                tree = self.slt_generator.generate(latex)
 
             if tree is None:
                 return []
@@ -500,8 +550,15 @@ class FormulaTrainer:
             >>> trainer = FormulaTrainer(tree_type="SLT", vector_size=200)
             >>> model = trainer.train(file_numbers=[1, 2], num_formulas=50000)
         """
+        # Set all random seeds for reproducibility
+        import random
+        import numpy as np
+        
+        random.seed(42)
+        np.random.seed(42)
         logger.info("=" * 70)
         logger.info(f"FASTTEXT TRAINING PIPELINE ({self.tree_type})")
+        logger.info(f"Embedding type: {self.embedding_type.name}, Tokenize number: {self.tokenize_number}")
         logger.info("=" * 70)
 
         print(f"Number of cpus: {self.num_workers}")
@@ -528,6 +585,7 @@ class FormulaTrainer:
         logger.info("\nPhase 4: Training FastText Model")
         logger.info(f"  Tree type: {self.tree_type}")
         logger.info(f"  Embedding type: {self.embedding_type.name}")
+        logger.info(f"  Tokenize number: {self.tokenize_number}")
         logger.info(f"  Vector size: {self.vector_size}")
         logger.info(f"  Window: {self.window}")
         logger.info(f"  Min n-gram: {self.min_n}")
@@ -599,6 +657,7 @@ class FormulaTrainer:
         self.training_stats = {
             "tree_type": self.tree_type,
             "embedding_type": self.embedding_type.name,
+            "tokenize_number": self.tokenize_number,
             "files_used": self.used_files,
             "num_formulas_loaded": self.num_formulas_loaded,
             "num_sequences_encoded": len(encoded_sequences),
@@ -697,6 +756,325 @@ class FormulaTrainer:
 
         vector = self.model.get_sentence_vector(encoded_sequence)
         return vector.tolist()
+
+    def _load_checkpoint(self) -> Dict:
+        """
+        Load batch training checkpoint.
+
+        Returns:
+            Checkpoint dict with keys: completed_files, last_file_number, last_file_row_index,
+            total_formulas_processed, batches_completed, total_formulas_available
+
+        Example checkpoint structure:
+            {
+                "tree_type": "SLT",
+                "completed_files": [1, 2, 3],
+                "last_file_number": 4,
+                "last_file_row_index": 150,
+                "total_formulas_processed": 10150,
+                "batches_completed": 2,
+                "total_formulas_available": 100000
+            }
+        """
+        if not self.checkpoint_path.exists():
+            logger.info(f"No checkpoint found, starting fresh: {self.checkpoint_path}")
+            return {
+                "tree_type": self.tree_type,
+                "completed_files": [],
+                "last_file_number": None,
+                "last_file_row_index": 0,
+                "total_formulas_processed": 0,
+                "batches_completed": 0,
+                "total_formulas_available": 0,
+            }
+
+        try:
+            with open(self.checkpoint_path, "r") as f:
+                checkpoint = json.load(f)
+            logger.info(f"Checkpoint loaded: {self.checkpoint_path}")
+            logger.info(
+                f"  Batches completed: {checkpoint.get('batches_completed', 0)}"
+            )
+            logger.info(
+                f"  Formulas processed: {checkpoint.get('total_formulas_processed', 0)}"
+            )
+            return checkpoint
+        except Exception as e:
+            logger.error(f"Error loading checkpoint: {e}")
+            return {
+                "tree_type": self.tree_type,
+                "completed_files": [],
+                "last_file_number": None,
+                "last_file_row_index": 0,
+                "total_formulas_processed": 0,
+                "batches_completed": 0,
+                "total_formulas_available": 0,
+            }
+
+    def _save_checkpoint(
+        self,
+        completed_files: List[int],
+        last_file_number: Optional[int],
+        last_file_row_index: int,
+        total_formulas_processed: int,
+        batches_completed: int,
+        total_formulas_available: int,
+    ) -> None:
+        """
+        Save batch training checkpoint.
+
+        Args:
+            completed_files: List of fully processed file numbers
+            last_file_number: Current file number being processed
+            last_file_row_index: Row index in current file
+            total_formulas_processed: Total formulas processed across all batches
+            batches_completed: Number of batches completed
+            total_formulas_available: Total formulas available in dataset
+        """
+        checkpoint = {
+            "tree_type": self.tree_type,
+            "completed_files": completed_files,
+            "last_file_number": last_file_number,
+            "last_file_row_index": last_file_row_index,
+            "total_formulas_processed": total_formulas_processed,
+            "batches_completed": batches_completed,
+            "total_formulas_available": total_formulas_available,
+        }
+
+        self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.checkpoint_path, "w") as f:
+            json.dump(checkpoint, f, indent=2)
+
+        logger.info(f"Checkpoint saved: {self.checkpoint_path}")
+        logger.info(f"  Batches completed: {batches_completed}")
+        logger.info(f"  Formulas processed: {total_formulas_processed}")
+
+    def train_batch(
+        self,
+        batch_size: int = 30000,
+        epochs: int = 5,
+        formula_column: str = "formula",
+    ) -> FastText:
+        """
+        Train FastText model on a batch of formulas with checkpoint resuming.
+
+        Useful for training in Google Colab with limited compute. Each batch:
+        1. Loads checkpoint to know where to resume from
+        2. Loads next batch_size formulas
+        3. Loads existing model (if available) or creates new one
+        4. Trains on batch
+        5. Saves model (overwrites) and updates checkpoint
+
+        Args:
+            batch_size: Number of formulas per batch (default: 30000)
+            epochs: Training epochs per batch (default: 5)
+            formula_column: Column name containing LaTeX strings
+
+        Returns:
+            Trained FastText model
+
+        Example:
+            >>> trainer = FormulaTrainer(tree_type="SLT")
+            >>> # First batch
+            >>> model = trainer.train_batch(batch_size=30000)
+            >>> # Next batch (automatically resumes from checkpoint)
+            >>> model = trainer.train_batch(batch_size=30000)
+            >>> # If interrupted mid-file, next call resumes from exact row
+        """
+        # Set random seeds for reproducibility
+        import random
+
+        random.seed(42)
+        np.random.seed(42)
+
+        logger.info("=" * 70)
+        logger.info("BATCH TRAINING ({self.tree_type})")
+        logger.info("=" * 70)
+
+        # Load checkpoint
+        checkpoint = self._load_checkpoint()
+        batches_completed = checkpoint["batches_completed"]
+        total_formulas_processed = checkpoint["total_formulas_processed"]
+        last_file_number = checkpoint["last_file_number"]
+        last_file_row_index = checkpoint["last_file_row_index"]
+
+        logger.info(f"\nBatch #{batches_completed + 1}")
+        logger.info(f"  Previous batches: {batches_completed}")
+        logger.info(f"  Total formulas processed: {total_formulas_processed}")
+
+        # Load checkpoint to find total available formulas (on first batch)
+        total_formulas_available = checkpoint.get("total_formulas_available", 0)
+        if total_formulas_available == 0:
+            # Count all available formulas
+            latex_dir = LATEX_REPRESENTATION
+            all_files = sorted(list(latex_dir.glob("*.tsv")), key=lambda x: int(x.stem))
+            total_formulas_available = sum(
+                sum(1 for _ in open(f)) for f in all_files
+            )
+            logger.info(f"Total formulas available: {total_formulas_available}")
+
+        # Determine starting point
+        start_file_number = last_file_number if last_file_number is not None else 1
+        start_file_row_index = (
+            last_file_row_index if last_file_number is not None else 0
+        )
+
+        # Phase 1: Load formulas
+        logger.info(f"\nPhase 1: Loading {batch_size} formulas")
+        formulas_df = self.load_latex_formulas(
+            start_file_number=start_file_number,
+            start_file_row_index=start_file_row_index,
+            num_formulas=batch_size,
+        )
+        batch_size_actual = len(formulas_df)
+        logger.info(f"Loaded {batch_size_actual} formulas")
+
+        # Phase 2: Generate tuples and encode
+        logger.info(f"\nPhase 2: Generating {self.tree_type} Tuples and Encoding")
+        encoded_sequences = self.process_formulas_batch(formulas_df, formula_column)
+
+        if not encoded_sequences:
+            raise ValueError("No sequences to train on (all formulas failed)")
+
+        # Phase 3: Save corpus (temporary, for this batch only)
+        logger.info("\nPhase 3: Saving Batch Corpus")
+        batch_corpus_path = (
+            self.corpus_path.parent
+            / f"{self.corpus_path.stem}_batch_{batches_completed + 1}.txt"
+        )
+        batch_corpus_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(batch_corpus_path, "w", encoding="utf-8") as f:
+            for seq in encoded_sequences:
+                f.write(seq + "\n")
+
+        corpus_size_kb = batch_corpus_path.stat().st_size / 1024
+        logger.info(f"Batch corpus saved: {corpus_size_kb:.1f} KB")
+
+        # Also update the main corpus file (append)
+        logger.info(f"Appending to main corpus: {self.corpus_path}")
+        with open(self.corpus_path, "a", encoding="utf-8") as f:
+            for seq in encoded_sequences:
+                f.write(seq + "\n")
+
+        # Phase 4: Load or create model and train
+        logger.info("\nPhase 4: Training FastText Model")
+        logger.info(f"  Tree type: {self.tree_type}")
+        logger.info(f"  Batch size: {batch_size_actual}")
+        logger.info(f"  Epochs: {epochs}")
+        logger.info(f"  Vector size: {self.vector_size}")
+        logger.info(f"  Window: {self.window}")
+
+        # Load existing model if available (for incremental training)
+        if self.model_path.exists():
+            logger.info(f"Loading existing model for incremental training: {self.model_path}")
+            self.model = FastText.load(str(self.model_path))
+        else:
+            logger.info("Creating new FastText model")
+            self.model = None
+
+        # Train with progress callback
+        callback = TrainingProgressCallback(epochs=epochs, corpus_file=str(batch_corpus_path))
+
+        if self.model is None:
+            # New model
+            self.model = FastText(
+                corpus_file=str(batch_corpus_path),
+                vector_size=self.vector_size,
+                window=self.window,
+                min_n=self.min_n,
+                max_n=self.max_n,
+                negative=self.negative,
+                sg=0,  # CBOW
+                seed=42,
+                epochs=epochs,
+                callbacks=[callback],
+            )
+        else:
+            # Incremental training on existing model
+            self.model.train(
+                corpus_file=str(batch_corpus_path),
+                epochs=epochs,
+                total_examples=self.model.corpus_count,
+                callbacks=[callback],
+            )
+
+        logger.info("Training complete")
+
+        # Phase 5: Save model and update checkpoint
+        logger.info("\nPhase 5: Saving Model and Checkpoint")
+        self.model_path.parent.mkdir(parents=True, exist_ok=True)
+        self.model.save(str(self.model_path))
+        logger.info(f"Model saved to: {self.model_path}")
+
+        # Save encoder maps (accumulate across batches)
+        logger.info(f"Saving encoder maps to {self.encoder_maps_path}")
+        node_map, edge_map = self.token_id_manager.get_updates()
+        save_maps(node_map, edge_map, str(self.encoder_maps_path))
+        logger.info(f"Encoder maps: {len(node_map)} nodes, {len(edge_map)} edges")
+
+        # Update checkpoint: extract file numbers from used_files
+        completed_files_from_batch = [
+            int(f.replace(".tsv", "")) for f in self.used_files
+        ]
+
+        # Determine if last file was fully processed
+        latex_dir = LATEX_REPRESENTATION
+        if completed_files_from_batch:
+            last_file_num = completed_files_from_batch[-1]
+            last_file_path = latex_dir / f"{last_file_num}.tsv"
+            last_file_total_rows = sum(1 for _ in open(last_file_path))
+
+            # Check if we reached end of file or hit batch limit
+            if len(formulas_df) < batch_size:
+                # Reached end of file
+                last_file_row_index = 0
+                last_file_number = None
+            else:
+                # Hit batch limit, calculate row index in last file
+                rows_in_completed_files = sum(
+                    sum(1 for _ in open(latex_dir / f"{fn}.tsv"))
+                    for fn in completed_files_from_batch[:-1]
+                )
+                last_file_row_index = batch_size_actual - rows_in_completed_files
+                last_file_number = last_file_num
+
+        # Update checkpoint
+        all_completed_files = (
+            checkpoint["completed_files"] + completed_files_from_batch
+        )
+        # Remove duplicates and sort
+        all_completed_files = sorted(list(set(all_completed_files)))
+
+        total_formulas_processed_new = total_formulas_processed + batch_size_actual
+        batches_completed_new = batches_completed + 1
+
+        self._save_checkpoint(
+            completed_files=all_completed_files,
+            last_file_number=last_file_number,
+            last_file_row_index=last_file_row_index,
+            total_formulas_processed=total_formulas_processed_new,
+            batches_completed=batches_completed_new,
+            total_formulas_available=total_formulas_available,
+        )
+
+        logger.info("\n" + "=" * 70)
+        logger.info("BATCH TRAINING COMPLETE")
+        logger.info("=" * 70)
+        logger.info(f"Batch #{batches_completed_new} completed")
+        logger.info(f"Total formulas processed: {total_formulas_processed_new}")
+        logger.info(
+            f"Progress: {total_formulas_processed_new / total_formulas_available * 100:.1f}%"
+        )
+
+        # Clean up batch corpus file
+        try:
+            batch_corpus_path.unlink()
+            logger.info(f"Temporary batch corpus deleted: {batch_corpus_path}")
+        except Exception as e:
+            logger.warning(f"Could not delete temporary corpus: {e}")
+
+        return self.model
 
     def get_stats(self) -> Dict:
         """Get training statistics and metadata."""
