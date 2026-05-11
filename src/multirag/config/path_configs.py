@@ -50,8 +50,8 @@ if USE_GCS:
     # GCS paths (for Google Colab)
     from pathlib import PurePosixPath
     
-    DATA_DIR = PurePosixPath(GCS_BUCKET_PATH) / "data"
-    PROJECT_ROOT = PurePosixPath(GCS_BUCKET_PATH)
+    DATA_DIR = PurePosixPath(GCS_BUCKET) / "data"
+    PROJECT_ROOT = PurePosixPath(GCS_BUCKET)
 else:
     # Local paths (for local development)
     PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
