@@ -37,6 +37,7 @@ from multirag.utils.file_utils import (
     glob_files,
     delete_file,
     count_lines,
+    USE_GCS_PATH_OPS,
 )
 
 logger = logging.getLogger(__name__)
@@ -293,7 +294,12 @@ class FormulaTrainer:
                     break
 
                 try:
-                    df = pd.read_csv(file_path, sep="\t", dtype=str)
+                    # Use open_file wrapper to handle GCS paths
+                    if USE_GCS_PATH_OPS:
+                        with open_file(file_path, 'r', encoding='utf-8') as f:
+                            df = pd.read_csv(f, sep="\t", dtype=str)
+                    else:
+                        df = pd.read_csv(file_path, sep="\t", dtype=str)
 
                     # Skip rows if resuming from middle of file
                     if is_first_file and start_file_row_index > 0:
@@ -518,6 +524,94 @@ class FormulaTrainer:
 
         return encoded_sequences
 
+
+    def _save_model_gcs_safe(self, model_path: str) -> None:
+        """
+        Save model to path (local or GCS).
+        
+        For GCS: saves to temporary local file then uploads.
+        For local: saves directly.
+        
+        Args:
+            model_path: Destination path (can be local or GCS path)
+        """
+        if USE_GCS_PATH_OPS:
+            # For GCS: save to temporary local file, then upload
+            import tempfile
+            import os
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
+                tmp_path = tmp.name
+            try:
+                self.model.save(tmp_path)
+                # Upload to GCS
+                with open(tmp_path, 'rb') as f_local:
+                    with open_file(model_path, 'wb') as f_gcs:
+                        f_gcs.write(f_local.read())
+                logger.info(f"Model saved to GCS: {model_path}")
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+        else:
+            # For local: save directly
+            self.model.save(model_path)
+            logger.info(f"Model saved to: {model_path}")
+
+    def _load_model_gcs_safe(self, model_path: str) -> FastText:
+        """
+        Load model from path (local or GCS).
+        
+        For GCS: downloads to temporary local file then loads.
+        For local: loads directly.
+        
+        Args:
+            model_path: Source path (can be local or GCS path)
+            
+        Returns:
+            Loaded FastText model
+        """
+        if USE_GCS_PATH_OPS:
+            # For GCS: download to temporary local file, then load
+            import tempfile
+            import os
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
+                tmp_path = tmp.name
+            try:
+                # Download from GCS
+                with open_file(model_path, 'rb') as f_gcs:
+                    with open(tmp_path, 'wb') as f_local:
+                        f_local.write(f_gcs.read())
+                model = FastText.load(tmp_path)
+                logger.info(f"Model loaded from GCS: {model_path}")
+                return model
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+        else:
+            # For local: load directly
+            model = FastText.load(model_path)
+            logger.info(f"Model loaded from: {model_path}")
+            return model
+
+    def _load_corpus_sentences(self, corpus_path: str) -> List[List[str]]:
+        """
+        Load corpus from file (local or GCS) and return as list of sentences.
+        
+        Each sentence is a list of whitespace-separated tokens.
+        
+        Args:
+            corpus_path: Path to corpus file (can be local or GCS path)
+            
+        Returns:
+            List of sentences, where each sentence is a list of tokens
+        """
+        sentences = []
+        with open_file(corpus_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:  # Skip empty lines
+                    sentences.append(line.split())
+        return sentences
+
     def save_corpus_and_maps(self, encoded_sequences: List[str]) -> None:
         """
         Save encoded sequences in LineSentence format and encoder maps.
@@ -612,18 +706,37 @@ class FormulaTrainer:
         )
 
         # Train with LineSentence corpus file
-        self.model = FastText(
-            corpus_file=str(self.corpus_path),
-            vector_size=self.vector_size,
-            window=self.window,
-            min_n=self.min_n,
-            max_n=self.max_n,
-            negative=self.negative,
-            sg=0,  # CBOW (0) or Skip-gram (1)
-            seed=42,
-            epochs=epochs,
-            callbacks=[callback],  # Add progress callback
-        )
+        if USE_GCS_PATH_OPS:
+            # For GCS: load corpus into memory and use sentences parameter
+            logger.info("Loading corpus from GCS...")
+            sentences = self._load_corpus_sentences(str(self.corpus_path))
+            logger.info(f"Loaded {len(sentences)} sentences from corpus")
+            self.model = FastText(
+                sentences=sentences,
+                vector_size=self.vector_size,
+                window=self.window,
+                min_n=self.min_n,
+                max_n=self.max_n,
+                negative=self.negative,
+                sg=0,  # CBOW (0) or Skip-gram (1)
+                seed=42,
+                epochs=epochs,
+                callbacks=[callback],
+            )
+        else:
+            # For local: use corpus_file (LineSentence format)
+            self.model = FastText(
+                corpus_file=str(self.corpus_path),
+                vector_size=self.vector_size,
+                window=self.window,
+                min_n=self.min_n,
+                max_n=self.max_n,
+                negative=self.negative,
+                sg=0,  # CBOW (0) or Skip-gram (1)
+                seed=42,
+                epochs=epochs,
+                callbacks=[callback],  # Add progress callback
+            )
 
         logger.info("Training complete")
 
@@ -648,8 +761,7 @@ class FormulaTrainer:
             raise ValueError("Model not trained. Call train() first.")
 
         makedirs(str(Path(str(self.model_path)).parent), exist_ok=True)
-        self.model.save(str(self.model_path))
-        logger.info(f"Model saved to: {self.model_path}")
+        self._save_model_gcs_safe(str(self.model_path))
 
     def _save_metadata(self, encoded_sequences: List[str]) -> None:
         """
@@ -719,8 +831,7 @@ class FormulaTrainer:
         if not path_exists(model_path):
             raise FileNotFoundError(f"Model not found: {model_path}")
 
-        self.model = FastText.load(model_path)
-        logger.info(f"Model loaded from: {model_path}")
+        self.model = self._load_model_gcs_safe(model_path)
 
         # Load metadata if it exists
         self._load_metadata()
@@ -979,7 +1090,7 @@ class FormulaTrainer:
         # Load existing model if available (for incremental training)
         if path_exists(str(self.model_path)):
             logger.info(f"Loading existing model for incremental training: {self.model_path}")
-            self.model = FastText.load(str(self.model_path))
+            self.model = self._load_model_gcs_safe(str(self.model_path))
         else:
             logger.info("Creating new FastText model")
             self.model = None
@@ -987,27 +1098,57 @@ class FormulaTrainer:
         # Train with progress callback
         callback = TrainingProgressCallback(epochs=epochs, corpus_file=str(batch_corpus_path))
 
-        if self.model is None:
-            # New model
-            self.model = FastText(
-                corpus_file=str(batch_corpus_path),
-                vector_size=self.vector_size,
-                window=self.window,
-                min_n=self.min_n,
-                max_n=self.max_n,
-                negative=self.negative,
-                sg=0,  # CBOW
-                seed=42,
-                epochs=epochs,
-                callbacks=[callback],
-            )
+        if USE_GCS_PATH_OPS:
+            # For GCS: load corpus into memory and use sentences parameter
+            logger.info("Loading batch corpus from GCS...")
+            sentences = self._load_corpus_sentences(str(batch_corpus_path))
+            logger.info(f"Loaded {len(sentences)} sentences from batch corpus")
+            
+            if self.model is None:
+                # New model
+                self.model = FastText(
+                    sentences=sentences,
+                    vector_size=self.vector_size,
+                    window=self.window,
+                    min_n=self.min_n,
+                    max_n=self.max_n,
+                    negative=self.negative,
+                    sg=0,  # CBOW
+                    seed=42,
+                    epochs=epochs,
+                    callbacks=[callback],
+                )
+            else:
+                # Incremental training on existing model
+                self.model.train(
+                    sentences=sentences,
+                    epochs=epochs,
+                    total_examples=self.model.corpus_count,
+                    callbacks=[callback],
+                )
         else:
-            # Incremental training on existing model
-            self.model.train(
-                corpus_file=str(batch_corpus_path),
-                epochs=epochs,
-                total_examples=self.model.corpus_count,
-                callbacks=[callback],
+            # For local: use corpus_file (LineSentence format)
+            if self.model is None:
+                # New model
+                self.model = FastText(
+                    corpus_file=str(batch_corpus_path),
+                    vector_size=self.vector_size,
+                    window=self.window,
+                    min_n=self.min_n,
+                    max_n=self.max_n,
+                    negative=self.negative,
+                    sg=0,  # CBOW
+                    seed=42,
+                    epochs=epochs,
+                    callbacks=[callback],
+                )
+            else:
+                # Incremental training on existing model
+                self.model.train(
+                    corpus_file=str(batch_corpus_path),
+                    epochs=epochs,
+                    total_examples=self.model.corpus_count,
+                    callbacks=[callback],
             )
 
         logger.info("Training complete")
@@ -1015,8 +1156,7 @@ class FormulaTrainer:
         # Phase 5: Save model and update checkpoint
         logger.info("\nPhase 5: Saving Model and Checkpoint")
         makedirs(str(Path(str(self.model_path)).parent), exist_ok=True)
-        self.model.save(str(self.model_path))
-        logger.info(f"Model saved to: {self.model_path}")
+        self._save_model_gcs_safe(str(self.model_path))
 
         # Save encoder maps (accumulate across batches)
         logger.info(f"Saving encoder maps to {self.encoder_maps_path}")
