@@ -24,18 +24,16 @@ class LatexToMathML(object):
     @classmethod
     def convert_to_mathml(cls, tex_query):
         # print("Convert LaTeX to MathML:$"+tex_query+"$",flush=True)
-        # Look for mws.sty.ltxml in the current directory or fallback to TangentCFT
+        # Look for mws.sty.ltxml in the current directory (src/multirag/formula_search/)
         qvar_template_file = os.path.join(os.path.dirname(__file__), "mws.sty.ltxml")
-        if not os.path.exists(qvar_template_file):
-            # Fallback to external/TangentCFT if not found
-            qvar_template_file = os.path.join(
-                os.path.dirname(__file__),
-                "../../../external/TangentCFT/TangentS/math_tan/mws.sty.ltxml",
-            )
 
         if not os.path.exists(qvar_template_file):
-            print("Tried %s" % qvar_template_file, end=": ")
-            sys.exit("Stylesheet for wildcard is missing")
+            error_msg = (
+                f"Stylesheet for MathWeb Search (mws.sty.ltxml) not found at:\n"
+                f"  {qvar_template_file}\n"
+                f"This file is required for LaTeX to MathML conversion."
+            )
+            sys.exit(error_msg)
 
         # Make sure there are no isolated % signs in tex_query (introduced by latexmlmath, for example, in 13C.mml test file) (FWT)
         tex_query = re.sub(
@@ -86,18 +84,16 @@ class LatexToMathML(object):
     @classmethod
     def convert_to_mathml2(cls, tex_query):
         # print("Convert LaTeX to MathML:$"+tex_query+"$",flush=True)
-        # Look for mws.sty.ltxml in the current directory or fallback to TangentCFT
+        # Look for mws.sty.ltxml in the current directory (src/multirag/formula_search/)
         qvar_template_file = os.path.join(os.path.dirname(__file__), "mws.sty.ltxml")
-        if not os.path.exists(qvar_template_file):
-            # Fallback to external/TangentCFT if not found
-            qvar_template_file = os.path.join(
-                os.path.dirname(__file__),
-                "../../../external/TangentCFT/TangentS/math_tan/mws.sty.ltxml",
-            )
 
         if not os.path.exists(qvar_template_file):
-            print("Tried %s" % qvar_template_file, end=": ")
-            sys.exit("Stylesheet for wildcard is missing")
+            error_msg = (
+                f"Stylesheet for MathWeb Search (mws.sty.ltxml) not found at:\n"
+                f"  {qvar_template_file}\n"
+                f"This file is required for LaTeX to MathML conversion."
+            )
+            sys.exit(error_msg)
 
         # Make sure there are no isolated % signs in tex_query (introduced by latexmlmath, for example, in 13C.mml test file) (FWT)
         tex_query = re.sub(
