@@ -4,13 +4,22 @@
 import os
 import logging
 from pathlib import Path
-from typing import Optional, List, Generator
+from typing import Optional, List
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-# Detect if using GCS paths
-USE_GCS = os.getenv('USE_GCS_PATHS', 'false').lower() in ('true', '1', 'yes')
+# Detect environment: if in Colab, use GCS; otherwise use local
+def _is_colab() -> bool:
+    """Detect if running in Google Colab."""
+    try:
+        from google.colab import drive  # noqa
+        return True
+    except ImportError:
+        return False
+
+IN_COLAB = _is_colab()
+USE_GCS_PATH_OPS = IN_COLAB or os.getenv('USE_GCS_PATHS', 'false').lower() in ('true', '1', 'yes')
 
 # Initialize GCS filesystem if needed
 _GCS_FS = None
@@ -28,24 +37,22 @@ def _get_gcs_fs():
     return _GCS_FS
 
 
-def is_gcs_path(path) -> bool:
-    """Check if path is a GCS path."""
-    return isinstance(path, (str, Path)) and str(path).startswith('gs://')
-
-
 def path_exists(path) -> bool:
     """
-    Check if path exists (works with local or GCS paths).
+    Check if path exists (local or GCS).
+    
+    If in Colab (USE_GCS_PATH_OPS=True), uses GCS operations.
+    Otherwise, uses local filesystem.
     
     Args:
-        path: Local path (str or Path) or GCS path (str starting with gs://)
+        path: Path string (local or GCS gs://bucket/path format)
     
     Returns:
         True if path exists, False otherwise
     """
     path_str = str(path)
     
-    if is_gcs_path(path_str):
+    if USE_GCS_PATH_OPS:
         try:
             fs = _get_gcs_fs()
             return fs.exists(path_str)
@@ -62,17 +69,15 @@ def makedirs(path, exist_ok: bool = True) -> None:
     For GCS, this is a no-op since GCS auto-creates on file write.
     
     Args:
-        path: Local path (str or Path) or GCS path (str)
+        path: Path string (local or GCS)
         exist_ok: If True, don't raise error if directory exists
     """
-    path_str = str(path)
-    
-    if is_gcs_path(path_str):
+    if USE_GCS_PATH_OPS:
         # GCS auto-creates directories on file write, skip mkdir
-        logger.debug(f"Skipping makedirs for GCS path: {path_str}")
+        logger.debug(f"Skipping makedirs for GCS (auto-created on write): {path}")
         pass
     else:
-        Path(path_str).mkdir(parents=True, exist_ok=exist_ok)
+        Path(path).mkdir(parents=True, exist_ok=exist_ok)
 
 
 @contextmanager
@@ -80,26 +85,27 @@ def open_file(path, mode: str = 'r', **kwargs):
     """
     Context manager to open file (local or GCS).
     
+    If in Colab (USE_GCS_PATH_OPS=True), uses gcsfs.
+    Otherwise, uses standard Python file operations.
+    
     Args:
-        path: Local path (str or Path) or GCS path (str)
+        path: Path string (local or GCS gs://bucket/path format)
         mode: File mode ('r', 'w', 'a', etc.)
         **kwargs: Additional arguments (encoding, etc.)
     
     Yields:
         File object
     """
-    path_str = str(path)
-    
-    if is_gcs_path(path_str):
+    if USE_GCS_PATH_OPS:
         try:
             fs = _get_gcs_fs()
-            with fs.open(path_str, mode, **kwargs) as f:
+            with fs.open(str(path), mode, **kwargs) as f:
                 yield f
         except Exception as e:
-            logger.error(f"Error opening GCS file {path_str}: {e}")
+            logger.error(f"Error opening GCS file {path}: {e}")
             raise
     else:
-        with open(path_str, mode, **kwargs) as f:
+        with open(str(path), mode, **kwargs) as f:
             yield f
 
 
@@ -108,22 +114,20 @@ def get_file_size(path) -> int:
     Get file size in bytes (local or GCS).
     
     Args:
-        path: Local path (str or Path) or GCS path (str)
+        path: Path string (local or GCS)
     
     Returns:
         File size in bytes
     """
-    path_str = str(path)
-    
-    if is_gcs_path(path_str):
+    if USE_GCS_PATH_OPS:
         try:
             fs = _get_gcs_fs()
-            return fs.size(path_str)
+            return fs.size(str(path))
         except Exception as e:
-            logger.error(f"Error getting GCS file size {path_str}: {e}")
+            logger.error(f"Error getting GCS file size {path}: {e}")
             raise
     else:
-        return Path(path_str).stat().st_size
+        return Path(str(path)).stat().st_size
 
 
 def glob_files(directory, pattern: str = "*.tsv") -> List[str]:
@@ -139,7 +143,7 @@ def glob_files(directory, pattern: str = "*.tsv") -> List[str]:
     """
     dir_str = str(directory)
     
-    if is_gcs_path(dir_str):
+    if USE_GCS_PATH_OPS:
         try:
             fs = _get_gcs_fs()
             glob_pattern = f"{dir_str.rstrip('/')}/{pattern}"
@@ -162,11 +166,11 @@ def delete_file(path) -> None:
     Delete file (local or GCS).
     
     Args:
-        path: Local path (str or Path) or GCS path (str)
+        path: Path string (local or GCS)
     """
     path_str = str(path)
     
-    if is_gcs_path(path_str):
+    if USE_GCS_PATH_OPS:
         try:
             fs = _get_gcs_fs()
             fs.rm(path_str)
@@ -184,17 +188,17 @@ def get_parent_dir(path) -> str:
     Get parent directory path.
     
     Args:
-        path: Local path (str or Path) or GCS path (str)
+        path: Path string (local or GCS)
     
     Returns:
         Parent directory path as string
     """
     path_str = str(path)
     
-    if is_gcs_path(path_str):
+    if USE_GCS_PATH_OPS:
         # For GCS paths, split on '/' and rejoin
         parts = path_str.rstrip('/').rsplit('/', 1)
-        return parts[0] if len(parts) > 1 else 'gs://'
+        return parts[0] if len(parts) > 1 else 'gs://multi-index-rag-bucket'
     else:
         return str(Path(path_str).parent)
 

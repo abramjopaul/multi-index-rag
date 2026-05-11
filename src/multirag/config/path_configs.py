@@ -40,7 +40,7 @@ USE_GCS = _is_gcs_mode()
 
 # GCS bucket configuration
 GCS_BUCKET = "multi-index-rag-bucket"
-GCS_BUCKET_PATH = f"gs://{GCS_BUCKET}"
+
 
 # ============================================================================
 # PATH INITIALIZATION
