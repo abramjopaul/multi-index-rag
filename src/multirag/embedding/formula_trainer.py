@@ -29,6 +29,15 @@ from multirag.formula_search import (
     TupleTokenizer,
 )
 from multirag.formula_search.encoder_maps import save_maps
+from multirag.utils.file_utils import (
+    makedirs,
+    path_exists,
+    open_file,
+    get_file_size,
+    glob_files,
+    delete_file,
+    count_lines,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +51,7 @@ class TrainingProgressCallback(CallbackAny2Vec):
         self.epoch = 0
 
         # Calculate corpus size (number of lines)
-        with open(corpus_file, "r", encoding="utf-8") as f:
+        with open_file(corpus_file, "r", encoding="utf-8") as f:
             self.corpus_size = sum(1 for _ in f)
 
         self.pbar = None
@@ -179,7 +188,7 @@ class FormulaTrainer:
 
         # Setup output directories
         self.output_dir = FORMULA_INDEX_DIR
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        makedirs(str(self.output_dir), exist_ok=True)
 
         # Artifact paths (use lowercase tree_type with hyphens replaced by underscores)
         tree_type_suffix = self.tree_type.lower().replace("-", "_")
@@ -235,7 +244,7 @@ class FormulaTrainer:
             >>> df = trainer.load_latex_formulas(start_file_number=4, start_file_row_index=150, num_formulas=10000)
         """
         latex_dir = LATEX_REPRESENTATION
-        if not latex_dir.exists():
+        if not path_exists(str(latex_dir)):
             raise FileNotFoundError(
                 f"LaTeX representation directory not found: {latex_dir}"
             )
@@ -245,23 +254,25 @@ class FormulaTrainer:
         # Determine which files to load
         if start_file_number is not None:
             # Resume from specific file number (for batch training)
-            all_files = sorted(list(latex_dir.glob("*.tsv")), key=lambda x: int(x.stem))
-            file_nums = [int(f.stem) for f in all_files]
+            all_files = glob_files(str(latex_dir), "*.tsv")
+            all_files = sorted(all_files, key=lambda x: int(Path(x).stem) if not str(x).startswith('gs://') else int(str(x).split('/')[-1].replace('.tsv', '')))
+            file_nums = [int(Path(f).stem) if not str(f).startswith('gs://') else int(str(f).split('/')[-1].replace('.tsv', '')) for f in all_files]
             start_idx = file_nums.index(start_file_number) if start_file_number in file_nums else 0
             files = all_files[start_idx:]
         elif file_numbers is None:
             # Load all files
-            files = sorted(list(latex_dir.glob("*.tsv")), key=lambda x: int(x.stem))
+            files = glob_files(str(latex_dir), "*.tsv")
+            files = sorted(files, key=lambda x: int(Path(x).stem) if not str(x).startswith('gs://') else int(str(x).split('/')[-1].replace('.tsv', '')))
         else:
             # Load specific files
             files = []
             for num in file_numbers:
-                file_path = latex_dir / f"{num}.tsv"
-                if not file_path.exists():
+                file_path = str(latex_dir / f"{num}.tsv")
+                if not path_exists(file_path):
                     logger.warning(f"File not found: {file_path}")
                 else:
                     files.append(file_path)
-            files = sorted(files, key=lambda x: int(x.stem))
+            files = sorted(files, key=lambda x: int(Path(x).stem) if not str(x).startswith('gs://') else int(str(x).split('/')[-1].replace('.tsv', '')))
 
         if not files:
             raise ValueError(f"No files found to load")
@@ -299,11 +310,13 @@ class FormulaTrainer:
                             df = df.head(remaining)
 
                     all_formulas.append(df)
-                    self.used_files.append(file_path.name)
+                    # Extract filename from both local Path and GCS string paths
+                    filename = Path(file_path).name if not str(file_path).startswith('gs://') else str(file_path).split('/')[-1]
+                    self.used_files.append(filename)
                     total_loaded += len(df)
                     pbar.update(len(df))
 
-                    logger.info(f"Loaded {len(df)} formulas from {file_path.name}")
+                    logger.info(f"Loaded {len(df)} formulas from {filename}")
 
                 except Exception as e:
                     logger.error(f"Error loading {file_path}: {e}")
@@ -514,13 +527,13 @@ class FormulaTrainer:
         """
         # Save corpus in LineSentence format
         logger.info(f"Saving {len(encoded_sequences)} sequences to {self.corpus_path}")
-        self.corpus_path.parent.mkdir(parents=True, exist_ok=True)
+        makedirs(str(Path(str(self.corpus_path)).parent), exist_ok=True)
 
-        with open(self.corpus_path, "w", encoding="utf-8") as f:
+        with open_file(str(self.corpus_path), "w", encoding="utf-8") as f:
             for seq in encoded_sequences:
                 f.write(seq + "\n")
 
-        corpus_size_kb = self.corpus_path.stat().st_size / 1024
+        corpus_size_kb = get_file_size(str(self.corpus_path)) / 1024
         logger.info(f"Corpus saved: {corpus_size_kb:.1f} KB")
 
         # Save encoder maps
@@ -634,7 +647,7 @@ class FormulaTrainer:
         if self.model is None:
             raise ValueError("Model not trained. Call train() first.")
 
-        self.model_path.parent.mkdir(parents=True, exist_ok=True)
+        makedirs(str(Path(str(self.model_path)).parent), exist_ok=True)
         self.model.save(str(self.model_path))
         logger.info(f"Model saved to: {self.model_path}")
 
@@ -685,8 +698,8 @@ class FormulaTrainer:
                 logger.warning(f"Could not attach metadata to model: {e}")
 
         # Also save to JSON file as backup (in case meta is lost during save/load)
-        self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.metadata_path, "w") as f:
+        makedirs(str(Path(str(self.metadata_path)).parent), exist_ok=True)
+        with open_file(str(self.metadata_path), "w") as f:
             json.dump(self.training_stats, f, indent=2)
 
         logger.info(f"Metadata saved to: {self.metadata_path}")
@@ -703,7 +716,7 @@ class FormulaTrainer:
         """
         model_path = model_path or str(self.model_path)
 
-        if not Path(model_path).exists():
+        if not path_exists(model_path):
             raise FileNotFoundError(f"Model not found: {model_path}")
 
         self.model = FastText.load(model_path)
@@ -733,9 +746,9 @@ class FormulaTrainer:
                 logger.warning(f"Could not read model.meta: {e}")
 
         # Fall back to JSON file
-        if self.metadata_path.exists():
+        if path_exists(str(self.metadata_path)):
             try:
-                with open(self.metadata_path, "r") as f:
+                with open_file(str(self.metadata_path), "r") as f:
                     self.training_stats = json.load(f)
                 logger.info(f"Metadata loaded from: {self.metadata_path}")
             except Exception as e:
@@ -776,7 +789,7 @@ class FormulaTrainer:
                 "total_formulas_available": 100000
             }
         """
-        if not self.checkpoint_path.exists():
+        if not path_exists(str(self.checkpoint_path)):
             logger.info(f"No checkpoint found, starting fresh: {self.checkpoint_path}")
             return {
                 "tree_type": self.tree_type,
@@ -789,7 +802,7 @@ class FormulaTrainer:
             }
 
         try:
-            with open(self.checkpoint_path, "r") as f:
+            with open_file(str(self.checkpoint_path), "r") as f:
                 checkpoint = json.load(f)
             logger.info(f"Checkpoint loaded: {self.checkpoint_path}")
             logger.info(
@@ -841,8 +854,8 @@ class FormulaTrainer:
             "total_formulas_available": total_formulas_available,
         }
 
-        self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.checkpoint_path, "w") as f:
+        makedirs(str(Path(str(self.checkpoint_path)).parent), exist_ok=True)
+        with open_file(str(self.checkpoint_path), "w") as f:
             json.dump(checkpoint, f, indent=2)
 
         logger.info(f"Checkpoint saved: {self.checkpoint_path}")
@@ -907,10 +920,9 @@ class FormulaTrainer:
         if total_formulas_available == 0:
             # Count all available formulas
             latex_dir = LATEX_REPRESENTATION
-            all_files = sorted(list(latex_dir.glob("*.tsv")), key=lambda x: int(x.stem))
-            total_formulas_available = sum(
-                sum(1 for _ in open(f)) for f in all_files
-            )
+            all_files = glob_files(str(latex_dir), "*.tsv")
+            all_files = sorted(all_files, key=lambda x: int(Path(x).stem) if not str(x).startswith('gs://') else int(str(x).split('/')[-1].replace('.tsv', '')))
+            total_formulas_available = sum(count_lines(f) for f in all_files)
             logger.info(f"Total formulas available: {total_formulas_available}")
 
         # Determine starting point
@@ -939,21 +951,20 @@ class FormulaTrainer:
         # Phase 3: Save corpus (temporary, for this batch only)
         logger.info("\nPhase 3: Saving Batch Corpus")
         batch_corpus_path = (
-            self.corpus_path.parent
-            / f"{self.corpus_path.stem}_batch_{batches_completed + 1}.txt"
+            str(self.corpus_path).rsplit('.', 1)[0] + f"_batch_{batches_completed + 1}.txt"
         )
-        batch_corpus_path.parent.mkdir(parents=True, exist_ok=True)
+        makedirs(str(Path(batch_corpus_path).parent), exist_ok=True)
 
-        with open(batch_corpus_path, "w", encoding="utf-8") as f:
+        with open_file(batch_corpus_path, "w", encoding="utf-8") as f:
             for seq in encoded_sequences:
                 f.write(seq + "\n")
 
-        corpus_size_kb = batch_corpus_path.stat().st_size / 1024
+        corpus_size_kb = get_file_size(batch_corpus_path) / 1024
         logger.info(f"Batch corpus saved: {corpus_size_kb:.1f} KB")
 
         # Also update the main corpus file (append)
         logger.info(f"Appending to main corpus: {self.corpus_path}")
-        with open(self.corpus_path, "a", encoding="utf-8") as f:
+        with open_file(str(self.corpus_path), "a", encoding="utf-8") as f:
             for seq in encoded_sequences:
                 f.write(seq + "\n")
 
@@ -966,7 +977,7 @@ class FormulaTrainer:
         logger.info(f"  Window: {self.window}")
 
         # Load existing model if available (for incremental training)
-        if self.model_path.exists():
+        if path_exists(str(self.model_path)):
             logger.info(f"Loading existing model for incremental training: {self.model_path}")
             self.model = FastText.load(str(self.model_path))
         else:
@@ -1003,7 +1014,7 @@ class FormulaTrainer:
 
         # Phase 5: Save model and update checkpoint
         logger.info("\nPhase 5: Saving Model and Checkpoint")
-        self.model_path.parent.mkdir(parents=True, exist_ok=True)
+        makedirs(str(Path(str(self.model_path)).parent), exist_ok=True)
         self.model.save(str(self.model_path))
         logger.info(f"Model saved to: {self.model_path}")
 
@@ -1022,8 +1033,8 @@ class FormulaTrainer:
         latex_dir = LATEX_REPRESENTATION
         if completed_files_from_batch:
             last_file_num = completed_files_from_batch[-1]
-            last_file_path = latex_dir / f"{last_file_num}.tsv"
-            last_file_total_rows = sum(1 for _ in open(last_file_path))
+            last_file_path = str(latex_dir / f"{last_file_num}.tsv")
+            last_file_total_rows = count_lines(last_file_path)
 
             # Check if we reached end of file or hit batch limit
             if len(formulas_df) < batch_size:
@@ -1033,7 +1044,7 @@ class FormulaTrainer:
             else:
                 # Hit batch limit, calculate row index in last file
                 rows_in_completed_files = sum(
-                    sum(1 for _ in open(latex_dir / f"{fn}.tsv"))
+                    count_lines(str(latex_dir / f"{fn}.tsv"))
                     for fn in completed_files_from_batch[:-1]
                 )
                 last_file_row_index = batch_size_actual - rows_in_completed_files
@@ -1069,7 +1080,7 @@ class FormulaTrainer:
 
         # Clean up batch corpus file
         try:
-            batch_corpus_path.unlink()
+            delete_file(batch_corpus_path)
             logger.info(f"Temporary batch corpus deleted: {batch_corpus_path}")
         except Exception as e:
             logger.warning(f"Could not delete temporary corpus: {e}")

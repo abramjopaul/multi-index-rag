@@ -6,8 +6,9 @@
 # This module handles persistence of token ID encoder maps to/from TSV format.
 
 import logging
-from pathlib import Path
 from typing import Dict, Tuple
+
+from ..utils.file_utils import makedirs, path_exists, open_file
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +36,11 @@ def save_maps(
         IOError: If file cannot be written
     """
     try:
-        path = Path(filepath)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure parent directory exists (no-op for GCS)
+        parent_dir = filepath.rsplit('/', 1)[0] if '/' in str(filepath) else '.'
+        makedirs(parent_dir, exist_ok=True)
 
-        with open(path, "w") as f:
+        with open_file(filepath, "w") as f:
             # Write header
             f.write("type\ttoken\tid\n")
 
@@ -79,12 +81,11 @@ def load_maps(filepath: str) -> Tuple[Dict[str, int], Dict[str, int]]:
     edge_map: Dict[str, int] = {}
 
     try:
-        path = Path(filepath)
-        if not path.exists():
+        if not path_exists(filepath):
             logger.warning(f"Encoder maps file not found: {filepath}")
             return node_map, edge_map
 
-        with open(path, "r") as f:
+        with open_file(filepath, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
             if not lines:
