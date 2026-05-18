@@ -30,14 +30,14 @@ from multirag.formula_search import (
 )
 from multirag.formula_search.encoder_maps import save_maps
 from multirag.utils.file_utils import (
-    makedirs,
-    path_exists,
-    open_file,
+    USE_GCS_PATH_OPS,
+    count_lines,
+    delete_file,
     get_file_size,
     glob_files,
-    delete_file,
-    count_lines,
-    USE_GCS_PATH_OPS,
+    makedirs,
+    open_file,
+    path_exists,
 )
 
 logger = logging.getLogger(__name__)
@@ -147,7 +147,9 @@ class FormulaTrainer:
         """
         self.tree_type = tree_type.upper()
         if self.tree_type not in {"SLT", "OPT", "SLT-TYPE"}:
-            raise ValueError(f"tree_type must be SLT, OPT, or SLT-TYPE, got {tree_type}")
+            raise ValueError(
+                f"tree_type must be SLT, OPT, or SLT-TYPE, got {tree_type}"
+            )
 
         # Auto-configure embedding_type based on tree_type if not provided
         if embedding_type is None:
@@ -157,7 +159,7 @@ class FormulaTrainer:
                 self.embedding_type = TupleTokenizationMode.Both_Separated
         else:
             self.embedding_type = embedding_type
-        
+
         self.vector_size = vector_size
         self.window = window
         self.min_n = min_n
@@ -167,10 +169,12 @@ class FormulaTrainer:
 
         # Set tokenize_number based on tree_type if not explicitly provided
         if tokenize_number is None:
-            self.tokenize_number = self.tree_type == "SLT"  # True for SLT, False for OPT/SLT-TYPE
+            self.tokenize_number = (
+                self.tree_type == "SLT"
+            )  # True for SLT, False for OPT/SLT-TYPE
         else:
             self.tokenize_number = tokenize_number
-        
+
         logger.info(
             f"Initialized with tree_type={self.tree_type}, embedding_type={self.embedding_type.name}, tokenize_number={self.tokenize_number}"
         )
@@ -193,11 +197,24 @@ class FormulaTrainer:
 
         # Artifact paths (use lowercase tree_type with hyphens replaced by underscores)
         tree_type_suffix = self.tree_type.lower().replace("-", "_")
-        self.encoder_maps_path = self.output_dir / f"encoder_maps_{tree_type_suffix}.tsv"
-        self.corpus_path = FASTTEXT_MODEL_DIR / f"corpus_{tree_type_suffix}.txt"  # LineSentence format
-        self.model_path = FASTTEXT_MODEL_DIR / f"fasttext_model_{tree_type_suffix}.bin"
-        self.metadata_path = FASTTEXT_MODEL_DIR / f"training_metadata_{tree_type_suffix}.json"
-        self.checkpoint_path = FASTTEXT_MODEL_DIR / f"checkpoint_{tree_type_suffix}.json"  # Batch training checkpoint
+
+        # Create tree-type-specific directory
+        self.tree_type_dir = self.output_dir / tree_type_suffix
+        makedirs(str(self.tree_type_dir), exist_ok=True)
+
+        self.encoder_maps_path = (
+            self.tree_type_dir / f"encoder_maps_{tree_type_suffix}.tsv"
+        )
+        self.corpus_path = (
+            self.tree_type_dir / f"corpus_{tree_type_suffix}.txt"
+        )  # LineSentence format
+        self.model_path = self.tree_type_dir / f"fasttext_model_{tree_type_suffix}.bin"
+        self.metadata_path = (
+            self.tree_type_dir / f"training_metadata_{tree_type_suffix}.json"
+        )
+        self.checkpoint_path = (
+            self.tree_type_dir / f"checkpoint_{tree_type_suffix}.json"
+        )  # Batch training checkpoint
 
         # Initialize generators and tokenizer
         self.slt_generator = SLTGenerator()
@@ -256,14 +273,39 @@ class FormulaTrainer:
         if start_file_number is not None:
             # Resume from specific file number (for batch training)
             all_files = glob_files(str(latex_dir), "*.tsv")
-            all_files = sorted(all_files, key=lambda x: int(Path(x).stem) if not str(x).startswith('gs://') else int(str(x).split('/')[-1].replace('.tsv', '')))
-            file_nums = [int(Path(f).stem) if not str(f).startswith('gs://') else int(str(f).split('/')[-1].replace('.tsv', '')) for f in all_files]
-            start_idx = file_nums.index(start_file_number) if start_file_number in file_nums else 0
+            all_files = sorted(
+                all_files,
+                key=lambda x: (
+                    int(Path(x).stem)
+                    if not str(x).startswith("gs://")
+                    else int(str(x).split("/")[-1].replace(".tsv", ""))
+                ),
+            )
+            file_nums = [
+                (
+                    int(Path(f).stem)
+                    if not str(f).startswith("gs://")
+                    else int(str(f).split("/")[-1].replace(".tsv", ""))
+                )
+                for f in all_files
+            ]
+            start_idx = (
+                file_nums.index(start_file_number)
+                if start_file_number in file_nums
+                else 0
+            )
             files = all_files[start_idx:]
         elif file_numbers is None:
             # Load all files
             files = glob_files(str(latex_dir), "*.tsv")
-            files = sorted(files, key=lambda x: int(Path(x).stem) if not str(x).startswith('gs://') else int(str(x).split('/')[-1].replace('.tsv', '')))
+            files = sorted(
+                files,
+                key=lambda x: (
+                    int(Path(x).stem)
+                    if not str(x).startswith("gs://")
+                    else int(str(x).split("/")[-1].replace(".tsv", ""))
+                ),
+            )
         else:
             # Load specific files
             files = []
@@ -273,7 +315,14 @@ class FormulaTrainer:
                     logger.warning(f"File not found: {file_path}")
                 else:
                     files.append(file_path)
-            files = sorted(files, key=lambda x: int(Path(x).stem) if not str(x).startswith('gs://') else int(str(x).split('/')[-1].replace('.tsv', '')))
+            files = sorted(
+                files,
+                key=lambda x: (
+                    int(Path(x).stem)
+                    if not str(x).startswith("gs://")
+                    else int(str(x).split("/")[-1].replace(".tsv", ""))
+                ),
+            )
 
         if not files:
             raise ValueError(f"No files found to load")
@@ -296,7 +345,7 @@ class FormulaTrainer:
                 try:
                     # Use open_file wrapper to handle GCS paths
                     if USE_GCS_PATH_OPS:
-                        with open_file(file_path, 'r', encoding='utf-8') as f:
+                        with open_file(file_path, "r", encoding="utf-8") as f:
                             df = pd.read_csv(f, sep="\t", dtype=str)
                     else:
                         df = pd.read_csv(file_path, sep="\t", dtype=str)
@@ -304,7 +353,9 @@ class FormulaTrainer:
                     # Skip rows if resuming from middle of file
                     if is_first_file and start_file_row_index > 0:
                         df = df.iloc[start_file_row_index:]
-                        logger.info(f"Resuming from row {start_file_row_index} in {file_path.name}")
+                        logger.info(
+                            f"Resuming from row {start_file_row_index} in {file_path.name}"
+                        )
                         is_first_file = False
                     elif is_first_file:
                         is_first_file = False
@@ -317,7 +368,11 @@ class FormulaTrainer:
 
                     all_formulas.append(df)
                     # Extract filename from both local Path and GCS string paths
-                    filename = Path(file_path).name if not str(file_path).startswith('gs://') else str(file_path).split('/')[-1]
+                    filename = (
+                        Path(file_path).name
+                        if not str(file_path).startswith("gs://")
+                        else str(file_path).split("/")[-1]
+                    )
                     self.used_files.append(filename)
                     total_loaded += len(df)
                     pbar.update(len(df))
@@ -524,28 +579,28 @@ class FormulaTrainer:
 
         return encoded_sequences
 
-
     def _save_model_gcs_safe(self, model_path: str) -> None:
         """
         Save model to path (local or GCS).
-        
+
         For GCS: saves to temporary local file then uploads.
         For local: saves directly.
-        
+
         Args:
             model_path: Destination path (can be local or GCS path)
         """
         if USE_GCS_PATH_OPS:
             # For GCS: save to temporary local file, then upload
-            import tempfile
             import os
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tmp:
                 tmp_path = tmp.name
             try:
                 self.model.save(tmp_path)
                 # Upload to GCS
-                with open(tmp_path, 'rb') as f_local:
-                    with open_file(model_path, 'wb') as f_gcs:
+                with open(tmp_path, "rb") as f_local:
+                    with open_file(model_path, "wb") as f_gcs:
                         f_gcs.write(f_local.read())
                 logger.info(f"Model saved to GCS: {model_path}")
             finally:
@@ -559,26 +614,27 @@ class FormulaTrainer:
     def _load_model_gcs_safe(self, model_path: str) -> FastText:
         """
         Load model from path (local or GCS).
-        
+
         For GCS: downloads to temporary local file then loads.
         For local: loads directly.
-        
+
         Args:
             model_path: Source path (can be local or GCS path)
-            
+
         Returns:
             Loaded FastText model
         """
         if USE_GCS_PATH_OPS:
             # For GCS: download to temporary local file, then load
-            import tempfile
             import os
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as tmp:
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as tmp:
                 tmp_path = tmp.name
             try:
                 # Download from GCS
-                with open_file(model_path, 'rb') as f_gcs:
-                    with open(tmp_path, 'wb') as f_local:
+                with open_file(model_path, "rb") as f_gcs:
+                    with open(tmp_path, "wb") as f_local:
                         f_local.write(f_gcs.read())
                 model = FastText.load(tmp_path)
                 logger.info(f"Model loaded from GCS: {model_path}")
@@ -595,12 +651,12 @@ class FormulaTrainer:
     def _load_corpus_sentences(self, corpus_path: str) -> List[List[str]]:
         """
         Load corpus from file (local or GCS) and return as list of sentences.
-        
+
         Each sentence is a list of whitespace-separated tokens.
-        
+
         Args:
             corpus_path: Path to corpus file (can be local or GCS path)
-            
+
         Returns:
             List of sentences, where each sentence is a list of tokens
         """
@@ -659,13 +715,16 @@ class FormulaTrainer:
         """
         # Set all random seeds for reproducibility
         import random
+
         import numpy as np
-        
+
         random.seed(42)
         np.random.seed(42)
         logger.info("=" * 70)
         logger.info(f"FASTTEXT TRAINING PIPELINE ({self.tree_type})")
-        logger.info(f"Embedding type: {self.embedding_type.name}, Tokenize number: {self.tokenize_number}")
+        logger.info(
+            f"Embedding type: {self.embedding_type.name}, Tokenize number: {self.tokenize_number}"
+        )
         logger.info("=" * 70)
 
         print(f"Number of cpus: {self.num_workers}")
@@ -1032,7 +1091,14 @@ class FormulaTrainer:
             # Count all available formulas
             latex_dir = LATEX_REPRESENTATION
             all_files = glob_files(str(latex_dir), "*.tsv")
-            all_files = sorted(all_files, key=lambda x: int(Path(x).stem) if not str(x).startswith('gs://') else int(str(x).split('/')[-1].replace('.tsv', '')))
+            all_files = sorted(
+                all_files,
+                key=lambda x: (
+                    int(Path(x).stem)
+                    if not str(x).startswith("gs://")
+                    else int(str(x).split("/")[-1].replace(".tsv", ""))
+                ),
+            )
             total_formulas_available = sum(count_lines(f) for f in all_files)
             logger.info(f"Total formulas available: {total_formulas_available}")
 
@@ -1062,7 +1128,8 @@ class FormulaTrainer:
         # Phase 3: Save corpus (temporary, for this batch only)
         logger.info("\nPhase 3: Saving Batch Corpus")
         batch_corpus_path = (
-            str(self.corpus_path).rsplit('.', 1)[0] + f"_batch_{batches_completed + 1}.txt"
+            str(self.corpus_path).rsplit(".", 1)[0]
+            + f"_batch_{batches_completed + 1}.txt"
         )
         makedirs(str(Path(batch_corpus_path).parent), exist_ok=True)
 
@@ -1089,21 +1156,25 @@ class FormulaTrainer:
 
         # Load existing model if available (for incremental training)
         if path_exists(str(self.model_path)):
-            logger.info(f"Loading existing model for incremental training: {self.model_path}")
+            logger.info(
+                f"Loading existing model for incremental training: {self.model_path}"
+            )
             self.model = self._load_model_gcs_safe(str(self.model_path))
         else:
             logger.info("Creating new FastText model")
             self.model = None
 
         # Train with progress callback
-        callback = TrainingProgressCallback(epochs=epochs, corpus_file=str(batch_corpus_path))
+        callback = TrainingProgressCallback(
+            epochs=epochs, corpus_file=str(batch_corpus_path)
+        )
 
         if USE_GCS_PATH_OPS:
             # For GCS: load corpus into memory and use sentences parameter
             logger.info("Loading batch corpus from GCS...")
             sentences = self._load_corpus_sentences(str(batch_corpus_path))
             logger.info(f"Loaded {len(sentences)} sentences from batch corpus")
-            
+
             if self.model is None:
                 # New model
                 self.model = FastText(
@@ -1149,7 +1220,7 @@ class FormulaTrainer:
                     epochs=epochs,
                     total_examples=self.model.corpus_count,
                     callbacks=[callback],
-            )
+                )
 
         logger.info("Training complete")
 
@@ -1191,9 +1262,7 @@ class FormulaTrainer:
                 last_file_number = last_file_num
 
         # Update checkpoint
-        all_completed_files = (
-            checkpoint["completed_files"] + completed_files_from_batch
-        )
+        all_completed_files = checkpoint["completed_files"] + completed_files_from_batch
         # Remove duplicates and sort
         all_completed_files = sorted(list(set(all_completed_files)))
 
