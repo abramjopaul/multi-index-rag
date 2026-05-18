@@ -10,13 +10,16 @@ from pathlib import Path
 # ENVIRONMENT DETECTION
 # ============================================================================
 
+
 def _is_colab() -> bool:
     """Detect if running in Google Colab."""
     try:
         from google.colab import drive  # noqa
+
         return True
     except ImportError:
         return False
+
 
 def _is_gcs_mode() -> bool:
     """
@@ -24,15 +27,16 @@ def _is_gcs_mode() -> bool:
     - True if running in Colab (default)
     - Can be overridden by USE_GCS_PATHS environment variable
     """
-    use_gcs = os.getenv('USE_GCS_PATHS', '').lower()
-    
-    if use_gcs in ('true', '1', 'yes'):
+    use_gcs = os.getenv("USE_GCS_PATHS", "").lower()
+
+    if use_gcs in ("true", "1", "yes"):
         return True
-    elif use_gcs in ('false', '0', 'no'):
+    elif use_gcs in ("false", "0", "no"):
         return False
     else:
         # Default: use GCS if in Colab
         return _is_colab()
+
 
 # Global flags
 IN_COLAB = _is_colab()
@@ -49,7 +53,7 @@ GCS_BUCKET = "multi-index-rag-bucket"
 if USE_GCS:
     # GCS paths (for Google Colab)
     from pathlib import PurePosixPath
-    
+
     DATA_DIR = PurePosixPath(GCS_BUCKET) / "data"
     PROJECT_ROOT = PurePosixPath(GCS_BUCKET)
 else:

@@ -8,7 +8,7 @@
 import logging
 from typing import Dict, Tuple
 
-from ..utils.file_utils import makedirs, path_exists, open_file
+from ..utils.file_utils import makedirs, open_file, path_exists
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def save_maps(
     """
     try:
         # Ensure parent directory exists (no-op for GCS)
-        parent_dir = filepath.rsplit('/', 1)[0] if '/' in str(filepath) else '.'
+        parent_dir = filepath.rsplit("/", 1)[0] if "/" in str(filepath) else "."
         makedirs(parent_dir, exist_ok=True)
 
         with open_file(filepath, "w") as f:
