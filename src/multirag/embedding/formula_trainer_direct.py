@@ -629,12 +629,63 @@ class FormulaTrainerDirect:
         # Save corpus and maps
         self.save_corpus_and_maps(encoded_sequences)
 
-        # Train FastText
-        logger.info("Training FastText model...")
-        from gensim.models import FastText
+        # Train FastText from corpus file (memory-efficient)
+        self._train_from_corpus_file(epochs, len(encoded_sequences))
 
+        logger.info(f"Training complete. Model saved: {self.model_path}")
+
+        return self.model
+
+    def train_from_corpus(
+        self,
+        corpus_path: str,
+        epochs: Optional[int] = None,
+    ) -> FastText:
+        """
+        Train FastText model directly from a pre-existing corpus file.
+        
+        This function streams from disk instead of loading all data into memory.
+        Useful when corpus file already exists and memory is limited.
+
+        Args:
+            corpus_path: Path to corpus file (LineSentence format: one sentence per line)
+            epochs: Number of training epochs (default: self.epochs from __init__)
+
+        Returns:
+            Trained FastText model
+
+        Example:
+            >>> trainer = FormulaTrainerDirect(tree_type="SLT")
+            >>> model = trainer.train_from_corpus("./data/formula-indexing/slt/corpus_slt.txt", epochs=5)
+        """
+        if epochs is None:
+            epochs = self.epochs
+
+        if not path_exists(corpus_path):
+            raise FileNotFoundError(f"Corpus file not found: {corpus_path}")
+
+        logger.info(f"Training from corpus file: {corpus_path}")
+        logger.info(f"Epochs: {epochs}")
+
+        self._train_from_corpus_file(epochs, num_sequences=None)
+
+        logger.info(f"Training complete. Model saved: {self.model_path}")
+
+        return self.model
+
+    def _train_from_corpus_file(self, epochs: int, num_sequences: Optional[int] = None) -> None:
+        """
+        Internal method to train FastText from corpus file (memory-efficient streaming).
+
+        Args:
+            epochs: Number of training epochs
+            num_sequences: Number of sequences in corpus (optional, for logging)
+        """
+        logger.info("Training FastText model from corpus file (memory-efficient)...")
+        
+        # Use corpus_file parameter for streaming (doesn't load all into memory)
         self.model = FastText(
-            sentences=[seq.split() for seq in encoded_sequences],
+            corpus_file=str(self.corpus_path),
             vector_size=self.vector_size,
             window=self.window,
             min_count=1,
@@ -651,22 +702,8 @@ class FormulaTrainerDirect:
 
         # Save model and metadata
         self._save_model()
-        self._save_metadata(encoded_sequences)
-
-        logger.info(f"Training complete. Model saved: {self.model_path}")
-
-        return self.model
-
-    def _save_model(self) -> None:
-        """Save trained FastText model."""
-        makedirs(str(self.model_path.parent), exist_ok=True)
-        self.model.save(str(self.model_path))
-        logger.info(f"Model saved: {self.model_path}")
-
-    def _save_metadata(self, encoded_sequences: List[str]) -> None:
-        """Save training metadata."""
-        makedirs(str(self.metadata_path.parent), exist_ok=True)
-
+        
+        # Create metadata for corpus-based training
         metadata = {
             "tree_type": self.tree_type,
             "embedding_type": self.embedding_type.name,
@@ -679,20 +716,28 @@ class FormulaTrainerDirect:
             "sg": self.sg,
             "hs": self.hs,
             "word_ngrams": self.word_ngrams,
-            "epochs": self.epochs,
+            "epochs": epochs,
             "num_workers": self.num_workers,
             "num_formulas_loaded": self.num_formulas_loaded,
-            "num_formulas_encoded": len(encoded_sequences),
+            "num_formulas_encoded": num_sequences or count_lines(str(self.corpus_path)),
             "files_used": self.used_files,
             "corpus_path": str(self.corpus_path),
             "model_path": str(self.model_path),
             "encoder_maps_path": str(self.encoder_maps_path),
+            "training_mode": "corpus_file_streaming",
         }
 
+        makedirs(str(self.metadata_path.parent), exist_ok=True)
         with open_file(str(self.metadata_path), "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
         logger.info(f"Metadata saved: {self.metadata_path}")
+
+    def _save_model(self) -> None:
+        """Save trained FastText model."""
+        makedirs(str(self.model_path.parent), exist_ok=True)
+        self.model.save(str(self.model_path))
+        logger.info(f"Model saved: {self.model_path}")
 
     def load_model(self, model_path: Optional[str] = None) -> FastText:
         """
