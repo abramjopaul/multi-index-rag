@@ -119,8 +119,8 @@ Examples:
     parser.add_argument(
         "-e", "--epochs",
         type=int,
-        default=30,
-        help="Training epochs (default: 30)"
+        default=5,
+        help="Training epochs (default: 5)"
     )
     
     parser.add_argument(
