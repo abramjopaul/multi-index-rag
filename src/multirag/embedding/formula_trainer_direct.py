@@ -13,6 +13,7 @@ from typing import Dict, List, Literal, Optional
 
 import pandas as pd
 from gensim.models import FastText
+from gensim.models.callbacks import CallbackAny2Vec
 from tqdm import tqdm
 
 from multirag.config.path_configs import (
@@ -44,6 +45,64 @@ from multirag.utils.file_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class TrainingProgressCallback(CallbackAny2Vec):
+    """Callback to track FastText training progress with tqdm.
+    
+    Note: This class is needed for unpickling FastText models that were
+    trained with a callback reference to this class. Required for gensim
+    compatibility during model loading.
+    """
+
+    def __init__(self, epochs: int, corpus_file: str):
+        """Initialize callback with epoch count and corpus file size."""
+        self.epochs = epochs
+        self.epoch = 0
+
+        # Calculate corpus size (number of lines)
+        with open_file(corpus_file, "r", encoding="utf-8") as f:
+            self.corpus_size = sum(1 for _ in f)
+
+        self.pbar = None
+
+    def on_epoch_begin(self, model) -> None:
+        """Called at start of each epoch."""
+        self.epoch += 1
+        total_words = (
+            self.corpus_size * model.corpus_total_words
+            if model.corpus_total_words
+            else self.corpus_size
+        )
+        desc = f"Training (Epoch {self.epoch}/{self.epochs})"
+
+        if self.pbar:
+            self.pbar.close()
+
+        self.pbar = tqdm(
+            total=total_words, desc=desc, unit=" words", unit_scale=True, leave=True
+        )
+
+    def on_epoch_end(self, model) -> None:
+        """Called at end of each epoch."""
+        if self.pbar:
+            self.pbar.update(self.pbar.total - self.pbar.n)  # Complete the bar
+            self.pbar.close()
+
+    def on_train_end(self, model) -> None:
+        """Called when training finishes."""
+        if self.pbar:
+            self.pbar.close()
+
+    def __getstate__(self) -> Dict:
+        """Exclude pbar from pickling (tqdm with file handles can't be pickled)."""
+        state = self.__dict__.copy()
+        state["pbar"] = None
+        return state
+
+    def __setstate__(self, state: Dict) -> None:
+        """Restore state, ensuring pbar is properly initialized."""
+        self.__dict__.update(state)
 
 
 class FormulaTrainerDirect:

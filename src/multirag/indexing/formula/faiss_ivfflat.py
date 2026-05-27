@@ -207,7 +207,7 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
 
         # Search
         qvec = query_embedding.astype(np.float32).reshape(1, -1)
-        distances, indices = self._faiss_index.search(qvec, k)
+        distances, indices = self._faiss_index.search(qvec, k) # type: ignore
 
         # Build results
         hits = []
@@ -279,11 +279,11 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
         self._faiss_index.nprobe = self.nprobe
 
         # Train
-        self._faiss_index.train(training_vectors)
+        self._faiss_index.train(training_vectors) # type: ignore
 
         # Add all vectors
         logger.info(f"Adding {len(embeddings)} vectors...")
-        self._faiss_index.add(embeddings_array)
+        self._faiss_index.add(embeddings_array) # type: ignore
 
         # Build ID map
         for idx, formula_data in enumerate(formulas):
