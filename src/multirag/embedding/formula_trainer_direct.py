@@ -7,15 +7,12 @@
 # Loads pre-computed MathML from TSV files and trains FastText on encoded tuples.
 # Optimized for Google Compute Engine with chunked I/O and GCS support.
 
-import json
 import logging
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
-import numpy as np
 import pandas as pd
 from gensim.models import FastText
-from gensim.models.callbacks import CallbackAny2Vec
 from tqdm import tqdm
 
 from multirag.config.path_configs import (
@@ -24,12 +21,15 @@ from multirag.config.path_configs import (
     OPT_REPRESENTATION,
     SLT_REPRESENTATION,
 )
+from multirag.embedding.formula_model_manager import FastTextModelManager
 from multirag.formula_search import (
     MathExtractor,
     SymbolTree,
     TokenIDManager,
     TupleTokenizationMode,
     TupleTokenizer,
+    encode_tuples,
+    extract_tuples_from_mathml_direct,
 )
 from multirag.formula_search.encoder_maps import save_maps
 from multirag.utils.file_utils import (
@@ -44,59 +44,6 @@ from multirag.utils.file_utils import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class TrainingProgressCallback(CallbackAny2Vec):
-    """Callback to track FastText training progress with tqdm."""
-
-    def __init__(self, epochs: int, corpus_file: str):
-        """Initialize callback with epoch count and corpus file size."""
-        self.epochs = epochs
-        self.epoch = 0
-
-        # Calculate corpus size (number of lines)
-        with open_file(corpus_file, "r", encoding="utf-8") as f:
-            self.corpus_size = sum(1 for _ in f)
-
-        self.pbar = None
-
-    def on_epoch_begin(self, model) -> None:
-        """Called at start of each epoch."""
-        self.epoch += 1
-        total_words = (
-            self.corpus_size * model.corpus_total_words
-            if model.corpus_total_words
-            else self.corpus_size
-        )
-        desc = f"Training (Epoch {self.epoch}/{self.epochs})"
-
-        if self.pbar:
-            self.pbar.close()
-
-        self.pbar = tqdm(
-            total=total_words, desc=desc, unit=" words", unit_scale=True, leave=True
-        )
-
-    def on_epoch_end(self, model) -> None:
-        """Called at end of each epoch."""
-        if self.pbar:
-            self.pbar.update(self.pbar.total - self.pbar.n)
-            self.pbar.close()
-
-    def on_train_end(self, model) -> None:
-        """Called when training finishes."""
-        if self.pbar:
-            self.pbar.close()
-
-    def __getstate__(self) -> Dict:
-        """Exclude pbar from pickling (tqdm with file handles can't be pickled)."""
-        state = self.__dict__.copy()
-        state["pbar"] = None
-        return state
-
-    def __setstate__(self, state: Dict) -> None:
-        """Restore state, ensuring pbar is properly initialized."""
-        self.__dict__.update(state)
 
 
 class FormulaTrainerDirect:
@@ -344,8 +291,22 @@ class FormulaTrainerDirect:
         else:  # OPT
             self.representation_dir = OPT_REPRESENTATION
 
-        self.model: Optional[FastText] = None
-        self.training_stats: Dict = {}
+        # Initialize model manager (lazy initialization for backward compatibility)
+        self.model_manager = FastTextModelManager(
+            model_path=str(self.model_path),
+            metadata_path=str(self.metadata_path),
+            corpus_path=str(self.corpus_path),
+            vector_size=vector_size,
+            window=window,
+            min_n=min_n,
+            max_n=max_n,
+            negative=negative,
+            sg=sg,
+            hs=hs,
+            word_ngrams=word_ngrams,
+            num_workers=num_workers,
+        )
+
         self.used_files: List[str] = []
         self.num_formulas_loaded = 0
 
@@ -450,65 +411,6 @@ class FormulaTrainerDirect:
 
         return combined_df
 
-    def generate_tuples_from_mathml(self, mathml: str) -> List[str]:
-        """
-        Generate tuples from MathML (no latexmlmath subprocess needed).
-
-        Args:
-            mathml: MathML string (Presentation for SLT, Content for OPT)
-
-        Returns:
-            List of tab-separated tuples (or empty list if parsing failed)
-        """
-        try:
-            if self.tree_type == "OPT":
-                # Content MathML → Operator Tree
-                cmml = MathExtractor.isolate_cmml(mathml)
-                symbol_root = MathExtractor.convert_to_semanticsymbol(cmml)
-            else:
-                # Presentation MathML → Symbol Layout Tree (SLT and SLT-TYPE)
-                pmml = MathExtractor.isolate_pmml(mathml)
-                symbol_root = MathExtractor.convert_to_layoutsymbol(pmml)
-
-            if symbol_root is None:
-                return []
-
-            # Extract tuples from SymbolTree
-            tree = SymbolTree(symbol_root)
-            tuples = tree.get_pairs(window=2, eob=True)
-            return tuples if tuples else []
-
-        except Exception as e:
-            logger.debug(f"Failed to parse MathML: {e}")
-            return []
-
-    def encode_tuples(self, tuples: List[str]) -> str:
-        """
-        Encode a list of tuples into a whitespace-separated token string.
-        
-        Process:
-        1. Each tuple is parsed and tokenized
-        2. Tokens are mapped to numeric IDs via TokenIDManager (encoder_maps)
-        3. IDs are converted to Unicode characters using chr()
-        4. Characters are concatenated into encoded token strings
-
-        Args:
-            tuples: List of tab-separated tuples
-
-        Returns:
-            Whitespace-separated encoded tokens (one token per tuple)
-        """
-        encoded_tokens = []
-
-        for tuple_str in tuples:
-            encoded = self.tuple_tokenizer.tokenize_tuple(tuple_str)
-            if encoded:
-                encoded_tokens.append(encoded)
-        
-        # print(f"Decoded tokens: [{', '.join('[' + ', '.join(str(ord(c)) for c in token) + ']' for token in encoded_tokens)}]")
-
-        return " ".join(encoded_tokens)  # Whitespace-separated for LineSentence
-
     def process_formulas_batch(
         self,
         formulas_df: pd.DataFrame,
@@ -549,9 +451,9 @@ class FormulaTrainerDirect:
                         pbar.update(1)
                         continue
 
-                    tuples = self.generate_tuples_from_mathml(mathml)
+                    tuples = extract_tuples_from_mathml_direct(mathml, self.tree_type)  # type: ignore
                     if tuples:
-                        encoded_seq = self.encode_tuples(tuples)
+                        encoded_seq = encode_tuples(tuples, self.tuple_tokenizer)
                         encoded_sequences.append(encoded_seq)
                         successful += 1
                     else:
@@ -629,12 +531,17 @@ class FormulaTrainerDirect:
         # Save corpus and maps
         self.save_corpus_and_maps(encoded_sequences)
 
-        # Train FastText from corpus file (memory-efficient)
-        self._train_from_corpus_file(epochs, len(encoded_sequences))
-
-        logger.info(f"Training complete. Model saved: {self.model_path}")
-
-        return self.model
+        # Train FastText from corpus file (memory-efficient) via manager
+        return self.model_manager.train_from_corpus_file(
+            epochs=epochs,
+            num_sequences=len(encoded_sequences),
+            tree_type=self.tree_type,
+            embedding_type_name=self.embedding_type.name,
+            tokenize_number=self.tokenize_number,
+            used_files=self.used_files,
+            num_formulas_loaded=self.num_formulas_loaded,
+            encoder_maps_path=str(self.encoder_maps_path),
+        )
 
     def train_from_corpus(
         self,
@@ -667,81 +574,24 @@ class FormulaTrainerDirect:
         logger.info(f"Training from corpus file: {corpus_path}")
         logger.info(f"Epochs: {epochs}")
 
-        self._train_from_corpus_file(epochs, num_sequences=None)
-
-        logger.info(f"Training complete. Model saved: {self.model_path}")
-
-        return self.model
-
-    def _train_from_corpus_file(self, epochs: int, num_sequences: Optional[int] = None) -> None:
-        """
-        Internal method to train FastText from corpus file (memory-efficient streaming).
-
-        Args:
-            epochs: Number of training epochs
-            num_sequences: Number of sequences in corpus (optional, for logging)
-        """
-        logger.info("Training FastText model from corpus file (memory-efficient)...")
-        
-        # Use corpus_file parameter for streaming (doesn't load all into memory)
-        self.model = FastText(
-            corpus_file=str(self.corpus_path),
-            vector_size=self.vector_size,
-            window=self.window,
-            min_count=1,
-            workers=self.num_workers,
-            negative=self.negative,
-            min_n=self.min_n,
-            max_n=self.max_n,
-            sg=self.sg,
-            hs=self.hs,
-            word_ngrams=self.word_ngrams,
+        # Update manager's corpus path and train
+        self.model_manager.corpus_path = Path(corpus_path)
+        return self.model_manager.train_from_corpus_file(
             epochs=epochs,
-            callbacks=[TrainingProgressCallback(epochs, str(self.corpus_path))],
+            num_sequences=None,
+            tree_type=self.tree_type,
+            embedding_type_name=self.embedding_type.name,
+            tokenize_number=self.tokenize_number,
+            used_files=self.used_files,
+            num_formulas_loaded=self.num_formulas_loaded,
+            encoder_maps_path=str(self.encoder_maps_path),
         )
-
-        # Save model and metadata
-        self._save_model()
-        
-        # Create metadata for corpus-based training
-        metadata = {
-            "tree_type": self.tree_type,
-            "embedding_type": self.embedding_type.name,
-            "tokenize_number": self.tokenize_number,
-            "vector_size": self.vector_size,
-            "window": self.window,
-            "min_n": self.min_n,
-            "max_n": self.max_n,
-            "negative": self.negative,
-            "sg": self.sg,
-            "hs": self.hs,
-            "word_ngrams": self.word_ngrams,
-            "epochs": epochs,
-            "num_workers": self.num_workers,
-            "num_formulas_loaded": self.num_formulas_loaded,
-            "num_formulas_encoded": num_sequences or count_lines(str(self.corpus_path)),
-            "files_used": self.used_files,
-            "corpus_path": str(self.corpus_path),
-            "model_path": str(self.model_path),
-            "encoder_maps_path": str(self.encoder_maps_path),
-            "training_mode": "corpus_file_streaming",
-        }
-
-        makedirs(str(self.metadata_path.parent), exist_ok=True)
-        with open_file(str(self.metadata_path), "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
-
-        logger.info(f"Metadata saved: {self.metadata_path}")
-
-    def _save_model(self) -> None:
-        """Save trained FastText model."""
-        makedirs(str(self.model_path.parent), exist_ok=True)
-        self.model.save(str(self.model_path))
-        logger.info(f"Model saved: {self.model_path}")
 
     def load_model(self, model_path: Optional[str] = None) -> FastText:
         """
         Load a trained FastText model.
+        
+        Delegates to FastTextModelManager for model loading.
 
         Args:
             model_path: Path to model file (default: self.model_path)
@@ -749,32 +599,15 @@ class FormulaTrainerDirect:
         Returns:
             Loaded FastText model
         """
-        if model_path is None:
-            model_path = str(self.model_path)
-
-        if not path_exists(model_path):
-            raise FileNotFoundError(f"Model not found: {model_path}")
-
-        logger.info(f"Loading model from {model_path}")
-        self.model = FastText.load(model_path)
-        self._load_metadata()
-
-        return self.model
-
-    def _load_metadata(self) -> None:
-        """Load training metadata."""
-        if not path_exists(str(self.metadata_path)):
-            logger.warning(f"Metadata file not found: {self.metadata_path}")
-            return
-
-        with open_file(str(self.metadata_path), "r", encoding="utf-8") as f:
-            self.training_stats = json.load(f)
-
-        logger.info(f"Metadata loaded: {self.metadata_path}")
+        if model_path is not None:
+            self.model_manager.model_path = Path(model_path)
+        return self.model_manager.load()
 
     def get_sentence_vector(self, encoded_sequence: str) -> list:
         """
         Get vector representation for an encoded sequence.
+        
+        Delegates to FastTextModelManager for vector generation.
 
         Args:
             encoded_sequence: Whitespace-separated encoded tokens
@@ -782,22 +615,15 @@ class FormulaTrainerDirect:
         Returns:
             Vector representation (list of floats)
         """
-        if self.model is None:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
-
-        tokens = encoded_sequence.split()
-        vectors = [self.model.wv[token] for token in tokens if token in self.model.wv]
-
-        if not vectors:
-            return np.zeros(self.vector_size).tolist()
-
-        return np.mean(vectors, axis=0).tolist()
+        return self.model_manager.get_sentence_vector(encoded_sequence)
 
     def get_stats(self) -> Dict:
         """
         Get training statistics.
+        
+        Delegates to FastTextModelManager for stats retrieval.
 
         Returns:
             Dictionary with training metadata
         """
-        return self.training_stats
+        return self.model_manager.get_stats()

@@ -72,31 +72,32 @@ class PostParser:
 
     def _parse_body(self, raw_html: str) -> tuple[str, list[PostFormula]]:
         """
-        Parse HTML body → (plain_text, list of PostFormula).
-        Uses lxml parser inside BeautifulSoup for speed.
+        Parse HTML body → (plain_text_with_inline_latex, list of PostFormula).
+        
+        - Removes <span class="math-container"> wrappers but keeps $...$ content inline
+        - Extracts formulas into separate list for formula-aware indexing
+        - Returns plain text suitable for BM25 and dense indexing
         """
         if not raw_html:
             return "", []
 
-        soup = BeautifulSoup(raw_html, "lxml")
+        soup = BeautifulSoup(raw_html, "html.parser")
 
-        # Generator expression here is appropriate —
-        # formulas per post are few, we materialise immediately into list
-        formulas = [
-            PostFormula(
-                formula_id=span.get("id", ""),  # type: ignore
-                latex=span.get_text().strip(),
+        # Extract formulas and replace spans with their text content
+        formulas = []
+        for span in soup.find_all("span", class_="math-container"):
+            formula_id = span.get("id", "")
+            latex_text = span.get_text().strip()
+            formulas.append(
+                PostFormula(formula_id=formula_id, latex=latex_text)
             )
-            for span in soup.find_all("span", class_="math-container")
-        ]
+            # Replace span with just its text content (preserves $...$ in body_text)
+            span.replace_with(latex_text)
 
-        # for span in soup.find_all("span", class_="math-container"):
-        #     span.decompose()
-
-        # plain_text = soup.get_text(separator=" ").strip()
-        # return plain_text, formulas
-        body_text = str(soup.body.decode_contents()) if soup.body else str(soup)
-        return body_text.strip(), formulas
+        # Extract plain text with inline formulas
+        # Using separator to add space between block elements
+        body_text = soup.get_text(separator=" ").strip()
+        return body_text, formulas
 
     def _iter_rows(self):
         """
