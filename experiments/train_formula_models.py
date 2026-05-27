@@ -10,7 +10,6 @@ from logging_config import configure_logging
 from multirag.embedding.formula_embedder import FormulaEmbedder
 from multirag.embedding.formula_trainer import FormulaTrainer
 from multirag.embedding.formula_trainer_direct import FormulaTrainerDirect
-from multirag.formula_search.formula_tokenizer_pipeline import FormulaTokenizerPipeline
 from multirag.formula_search.opt_generator import OPTGenerator
 from multirag.formula_search.slt_generator import SLTGenerator
 

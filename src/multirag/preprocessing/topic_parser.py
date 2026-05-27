@@ -53,29 +53,34 @@ class TopicReader:
 
     def _parse_formulas_text(self, raw_html: str) -> tuple[str, list[TopicFormula]]:
         """
-        Takes raw HTML question body, returns:
-        - plain text with formulas removed
-        - list of TopicFormula extracted from math-container spans
+        Parse HTML text and extract formulas.
+        
+        Returns:
+        - plain_text_with_inline_latex: Text with <span> tags removed but $...$ formulas kept inline
+        - formulas: List of TopicFormula objects for formula-aware indexing
+        
+        Design notes:
+        - Formulas kept inline in text for BM25/dense indexing (includes context)
+        - Formulas also extracted to separate list for formula-aware retrieval
+        - No HTML tags in output, only plain LaTeX with $...$ delimiters
         """
         if not raw_html:
             return "", []
 
-        soup = BeautifulSoup(raw_html, "lxml")
+        soup = BeautifulSoup(raw_html, "html.parser")
 
-        # Extract formulas before removing spans
-        formulas = [
-            TopicFormula(
-                formula_id=span.get("id", ""),  # type: ignore
-                latex=span.get_text().strip(),
+        # Extract formulas and replace spans with their text content
+        formulas = []
+        for span in soup.find_all("span", class_="math-container"):
+            formula_id = span.get("id", "")
+            latex_text = span.get_text().strip()
+            formulas.append(
+                TopicFormula(formula_id=formula_id, latex=latex_text)
             )
-            for span in soup.find_all("span", class_="math-container")
-        ]
+            # Replace span with just its text content (preserves $...$ in plain_text)
+            span.replace_with(latex_text)
 
-        # TODO: We could keep formulas in the title and question for now
-        # Remove formula spans so plain text is clean
-        # for span in soup.find_all("span", class_="math-container"):
-        #     span.decompose()
-
+        # Extract plain text with inline formulas
         plain_text = soup.get_text(separator=" ").strip()
         return plain_text, formulas
 
