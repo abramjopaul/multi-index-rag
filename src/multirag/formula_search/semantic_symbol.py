@@ -278,14 +278,21 @@ class SemanticSymbol(MathSymbol):
 
         elif elem.tag == MathML.share:
             # copy a portion of the tree used before ...
-            if elem.attrib["href"] == "#.cmml":
+            href = elem.attrib.get("href", "")
+            
+            if href == "#.cmml":
                 # special case common in equations, repeat right operand of last operation ...
-                if parent.parent.tag == "U!and":
+                if parent and parent.parent and parent.parent.tag == "U!and":
                     # identify root of subtree to copy ...
                     last_operand = parent.parent.children[-1].children[-1]
                     # copy ...
                     retval = SemanticSymbol.Copy(last_operand)
                     retval.parent = parent
+            else:
+                # Generic case: create a placeholder for the reference
+                # This preserves formula structure when we can't resolve the actual ref
+                # href typically looks like: #Ex1.m1.sh1 (latexmlmath reference)
+                retval = SemanticSymbol("?SHARE:" + href, parent=parent)
 
         # tags with special handling ...
         # ... groups of elements ...
@@ -677,6 +684,14 @@ class SemanticSymbol(MathSymbol):
                 elif content == "square-root":
                     # by default, degree two (squared root) will be generated at the parent node
                     retval = SemanticSymbol("O!root", parent=parent)
+                elif content == "conditional":
+                    # Represents divisibility operator: k|n means "k divides n"
+                    # Also used for conditional probability: P(A|B)
+                    retval = SemanticSymbol("O!conditional", parent=parent)
+                elif content == "differential-d":
+                    # Represents the differential operator 'd' in integrals
+                    # e.g., ∫ f(x) dx - the dx part
+                    retval = SemanticSymbol("O!differential", parent=parent)
 
                 if retval is None:
                     # check if content can be parsed as a number ... (it happens .... sometimes ... )

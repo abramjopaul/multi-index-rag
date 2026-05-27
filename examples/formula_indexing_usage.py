@@ -49,18 +49,18 @@ if __name__ == "__main__":
     # print("EXAMPLE 1: Index SLT representation with IVFFlat")
     # print("=" * 80)
 
-    indexer_ivfflat = FormulaFAISSIndexerIVFFlat(
-        index_path="data/indices/formula/test_slt_only",
-        embedding_dir="data/formula-indexing",
-        representation="slt",
-        force_rebuild=False,
-    )
-    indexer_ivfflat.batch_search([("q1", "p^2")], k=2)  # Test search without indexing
+    # indexer_ivfflat = FormulaFAISSIndexerIVFFlat(
+    #     index_path="data/indices/formula/test_slt_only",
+    #     embedding_dir="data/formula-indexing",
+    #     representation="slt",
+    #     force_rebuild=True,
+    # )
+    # indexer_ivfflat.batch_search([("q1", "p^2")], k=2)  # Test search without indexing
 
     # print(f"Representations: {indexer_ivfflat.get_representations()}")
     # indexer_ivfflat.index(limit=500)
 
-    # Example 2: Index SLT with IVFScalarQuantizer
+    # # Example 2: Index SLT with IVFScalarQuantizer
     # print("\n" + "=" * 80)
     # print("EXAMPLE 2: Index SLT representation with IVFScalarQuantizer (8-bit)")
     # print("=" * 80)
@@ -75,20 +75,20 @@ if __name__ == "__main__":
     # print(f"Representations: {indexer_ivfscalarquant.get_representations()}")
     # indexer_ivfscalarquant.index(limit=500)
 
-    # Example 3: Index OPT with IVFScalarQuantizer (fp16)
+    # # Example 3: Index OPT with IVFScalarQuantizer (fp16)
     # print("\n" + "=" * 80)
     # print("EXAMPLE 3: Index OPT representation with IVFScalarQuantizer (fp16)")
     # print("=" * 80)
 
-    # indexer_opt = FormulaFAISSIndexerIVFScalarQuantizer(
-    #     index_path="data/indices/formula/test_opt_sq",
-    #     embedding_dir="data/formula-indexing",
-    #     representation="opt",
-    #     quantizer_bits="fp16",
-    #     force_rebuild=False,
-    # )
-    # print(f"Representations: {indexer_opt.get_representations()}")
-    # indexer_opt.index(limit=5000)
+    indexer_opt = FormulaFAISSIndexerIVFScalarQuantizer(
+        index_path="data/indices/formula/test_opt_sq",
+        embedding_dir="data/formula-indexing",
+        representation="opt",
+        quantizer_bits="fp16",
+        force_rebuild=True,
+    )
+    print(f"Representations: {indexer_opt.get_representations()}")
+    indexer_opt.index(limit=500)
 
     
     print("\n✓ Uncomment indexer.index() calls above to run actual indexing")
