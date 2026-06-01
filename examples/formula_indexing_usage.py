@@ -88,7 +88,8 @@ if __name__ == "__main__":
         force_rebuild=True,
     )
     print(f"Representations: {indexer_opt.get_representations()}")
-    indexer_opt.index(limit=500)
+    # indexer_opt.index(limit=500)
+    indexer_opt.index()
 
     
     print("\n✓ Uncomment indexer.index() calls above to run actual indexing")

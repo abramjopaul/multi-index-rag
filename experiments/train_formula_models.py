@@ -160,6 +160,14 @@ Examples:
             epochs=args.epochs,
         )
         
+        ####Debugging: use FormulaTrainer for now to isolate issues with direct trainer
+        # trainer = FormulaTrainer(
+        #     tree_type=args.tree_type,
+        #     num_workers=args.num_workers,
+        #     vector_size=args.vector_size,
+
+        # )
+        
         logger.info("Starting training...")
         model = trainer.train(
             file_numbers=file_numbers,
@@ -173,6 +181,8 @@ Examples:
         logger.info("TRAINING COMPLETED SUCCESSFULLY")
         logger.info("=" * 70)
         logger.info(f"Training time: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
+        logger.info(f"Formulas loaded: {trainer.num_formulas_loaded}")
+        logger.info(f"Processing errors: {trainer.total_errors}")
         logger.info(f"Model saved: {trainer.model_path}")
         logger.info(f"Corpus saved: {trainer.corpus_path}")
         logger.info(f"Encoder maps: {trainer.encoder_maps_path}")

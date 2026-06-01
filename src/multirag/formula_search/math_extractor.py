@@ -25,6 +25,7 @@ from multirag.formula_search.exceptions import UnknownTagException
 from multirag.formula_search.latex_mml import LatexToMathML
 from multirag.formula_search.layout_symbol import LayoutSymbol
 from multirag.formula_search.semantic_symbol import SemanticSymbol
+from multirag.formula_search.share_resolver import ShareResolver
 from multirag.formula_search.symbol_tree import SymbolTree
 
 __author__ = "Nidhin, FWTompa, KDavila"
@@ -141,6 +142,9 @@ class MathExtractor:
         """
         if len(elem) == 0:
             return None
+
+        # Resolve any unresolved <share> elements before parsing
+        elem = ShareResolver.resolve(elem)
 
         elem_content = io.StringIO(elem)  # treat the string as if a file
         root = xml.etree.ElementTree.parse(elem_content).getroot()
