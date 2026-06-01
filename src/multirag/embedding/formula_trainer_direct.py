@@ -368,6 +368,7 @@ class FormulaTrainerDirect:
 
         self.used_files: List[str] = []
         self.num_formulas_loaded = 0
+        self.total_errors = 0  # Track errors during formula processing
 
     def load_formulas_from_tsv_chunks(
         self,
@@ -499,14 +500,13 @@ class FormulaTrainerDirect:
         """Process formulas: parse MathML and encode tuples."""
         encoded_sequences = []
         successful = 0
-        failed = 0
 
         with tqdm(total=len(formulas_df), desc="Processing", unit="formula") as pbar:
             for _, row in formulas_df.iterrows():
                 try:
                     mathml = row[formula_column]
                     if not mathml or not isinstance(mathml, str):
-                        failed += 1
+                        self.total_errors += 1
                         pbar.update(1)
                         continue
 
@@ -516,15 +516,15 @@ class FormulaTrainerDirect:
                         encoded_sequences.append(encoded_seq)
                         successful += 1
                     else:
-                        failed += 1
+                        self.total_errors += 1
 
                 except Exception as e:
                     logger.debug(f"Error processing formula: {e}")
-                    failed += 1
+                    self.total_errors += 1
 
                 pbar.update(1)
 
-        logger.info(f"Processed: {successful} successful, {failed} failed")
+        logger.info(f"Processed: {successful} successful, {self.total_errors} failed")
         return encoded_sequences
 
     def save_corpus_and_maps(self, encoded_sequences: List[str]) -> None:

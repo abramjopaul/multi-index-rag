@@ -1,0 +1,24 @@
+<Math xmlns="http://dlmf.nist.gov/LaTeXML" xmlns:m="http://www.w3.org/1998/Math/MathML" mode="inline" xml:id="p1.m1" tex="R=\sqrt{2}=\frac{Q}{D}" text="R = square-root@(2) = Q / D" fragid="p1.m1">
+  <m:math alttext="R=\sqrt{2}=\frac{Q}{D}" display="inline">
+    <m:apply>
+      <m:and/>
+      <m:apply>
+        <m:eq/>
+        <m:ci>𝑅</m:ci>
+        <m:apply>
+          <m:root/>
+          <m:cn type="integer">2</m:cn>
+        </m:apply>
+      </m:apply>
+      <m:apply>
+        <m:eq/>
+        <m:share href="#p1.m1.sh1"/>
+        <m:apply>
+          <m:divide/>
+          <m:ci>𝑄</m:ci>
+          <m:ci>𝐷</m:ci>
+        </m:apply>
+      </m:apply>
+    </m:apply>
+  </m:math>
+</Math>

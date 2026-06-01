@@ -14,10 +14,13 @@ Adapted for multirag formula_search module with relative imports
 __author__ = "KDavila"
 
 import html
+import logging
 
 from multirag.formula_search.exceptions import UnknownTagException
 from multirag.formula_search.math_symbol import MathSymbol
 from multirag.formula_search.mathml import MathML
+
+logger = logging.getLogger(__name__)
 
 
 class SemanticSymbol(MathSymbol):
@@ -277,22 +280,13 @@ class SemanticSymbol(MathSymbol):
             retval = op_root
 
         elif elem.tag == MathML.share:
-            # copy a portion of the tree used before ...
-            href = elem.attrib.get("href", "")
-            
-            if href == "#.cmml":
-                # special case common in equations, repeat right operand of last operation ...
-                if parent and parent.parent and parent.parent.tag == "U!and":
-                    # identify root of subtree to copy ...
-                    last_operand = parent.parent.children[-1].children[-1]
-                    # copy ...
-                    retval = SemanticSymbol.Copy(last_operand)
-                    retval.parent = parent
-            else:
-                # Generic case: create a placeholder for the reference
-                # This preserves formula structure when we can't resolve the actual ref
-                # href typically looks like: #Ex1.m1.sh1 (latexmlmath reference)
-                retval = SemanticSymbol("?SHARE:" + href, parent=parent)
+            # Share elements should be resolved before parsing by ShareResolver.
+            # If we encounter one here, it means share resolution didn't fully resolve it.
+            # This is rare and indicates a share pattern we don't recognize.
+            href = elem.attrib.get("href", "unknown")
+            logger.warning(f"Encountered unresolved share element: href={href}")
+            # Return wildcard placeholder instead of raising exception
+            retval = SemanticSymbol("W!", parent=parent)
 
         # tags with special handling ...
         # ... groups of elements ...
@@ -692,6 +686,14 @@ class SemanticSymbol(MathSymbol):
                     # Represents the differential operator 'd' in integrals
                     # e.g., ∫ f(x) dx - the dx part
                     retval = SemanticSymbol("O!differential", parent=parent)
+                elif content == "matrix":
+                    # Represents a matrix structure (alternative to MathML.matrix tag)
+                    # Used in vmatrix, bmatrix, pmatrix, etc.
+                    retval = SemanticSymbol("M!matrix", parent=parent)
+                elif content == "qvar_missing":
+                    # Represents a missing query variable in the formula
+                    # Occurs when there are parsing issues with variable references
+                    retval = SemanticSymbol("?QVAR_MISSING", parent=parent)
 
                 if retval is None:
                     # check if content can be parsed as a number ... (it happens .... sometimes ... )
