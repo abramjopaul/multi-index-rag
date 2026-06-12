@@ -1,65 +1,9 @@
-"""
-Path configuration module using pathlib for consistent path management.
-Intelligently switches between local and GCS paths based on environment.
-"""
+"""Path configuration module using pathlib."""
 
-import os
 from pathlib import Path
 
-# ============================================================================
-# ENVIRONMENT DETECTION
-# ============================================================================
-
-
-def _is_colab() -> bool:
-    """Detect if running in Google Colab."""
-    try:
-        from google.colab import drive  # noqa
-
-        return True
-    except ImportError:
-        return False
-
-
-def _is_gcs_mode() -> bool:
-    """
-    Detect if should use GCS paths.
-    - True if running in Colab (default)
-    - Can be overridden by USE_GCS_PATHS environment variable
-    """
-    use_gcs = os.getenv("USE_GCS_PATHS", "").lower()
-
-    if use_gcs in ("true", "1", "yes"):
-        return True
-    elif use_gcs in ("false", "0", "no"):
-        return False
-    else:
-        # Default: use GCS if in Colab
-        return _is_colab()
-
-
-# Global flags
-IN_COLAB = _is_colab()
-USE_GCS = _is_gcs_mode()
-
-# GCS bucket configuration
-GCS_BUCKET = "multi-index-rag-bucket"
-
-
-# ============================================================================
-# PATH INITIALIZATION
-# ============================================================================
-
-if USE_GCS:
-    # GCS paths (for Google Colab)
-    from pathlib import PurePosixPath
-
-    DATA_DIR = PurePosixPath(GCS_BUCKET) / "data"
-    PROJECT_ROOT = PurePosixPath(GCS_BUCKET)
-else:
-    # Local paths (for local development)
-    PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-    DATA_DIR = PROJECT_ROOT / "data"
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
 DATA_PROCESSED = DATA_DIR / "processed"
 DATA_RAW = DATA_DIR / "raw"
 
@@ -100,7 +44,6 @@ PREPROCESSING_DIR = MULTIRAG_DIR / "preprocessing"
 COLLECTION_PROCESSED = DATA_PROCESSED / "collection"
 ANSWERS_JSONL = COLLECTION_PROCESSED / "answers.jsonl"
 QUESTIONS_JSONL = COLLECTION_PROCESSED / "questions.jsonl"
-# INDEXABLE_CORPUS_JSONL = COLLECTION_PROCESSED / "indexable_corpus.jsonl"
 
 TOPICS_PROCESSED = DATA_PROCESSED / "topics"
 TOPICS_JSONL = TOPICS_PROCESSED / "topics.jsonl"
@@ -127,40 +70,3 @@ CONFIGS_DIR = PROJECT_ROOT / "configs"
 EXPERIMENTS_CONFIG_DIR = CONFIGS_DIR / "experiments"
 PROMPTS_CONFIG_DIR = CONFIGS_DIR / "prompts"
 FORMULA_CONFIG_PATH = CONFIGS_DIR / "formula_indexing.yaml"
-
-# ============================================================================
-# PATH CONFIGURATION INFO (for debugging)
-# ============================================================================
-
-import logging
-
-logger = logging.getLogger(__name__)
-
-# Log configuration info on import
-_log_msg = f"Path configuration: "
-if USE_GCS:
-    _log_msg += f"GCS mode (bucket: {GCS_BUCKET})"
-else:
-    _log_msg += f"Local mode (root: {PROJECT_ROOT})"
-
-_log_msg += f" | IN_COLAB: {IN_COLAB}"
-
-try:
-    logger.debug(_log_msg)
-except:
-    pass  # Logging not configured yet
-
-# ============================================================================
-# HOW TO CONFIGURE
-# ============================================================================
-# Local development (default):
-#   USE_GCS_PATHS=0 python script.py
-#   OR: export USE_GCS_PATHS=false
-#
-# Google Colab (auto-detected):
-#   Automatically uses GCS when running in Colab
-#   Override with: export USE_GCS_PATHS=false
-#
-# Manual GCS mode:
-#   USE_GCS_PATHS=1 python script.py
-# ============================================================================
