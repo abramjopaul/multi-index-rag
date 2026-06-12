@@ -35,9 +35,9 @@ def configure_logging(
     """
     # Priority: function arg > CLI arg > default
     if level is None:
-        level = sys.argv[1].upper() if len(sys.argv) > 1 else "INFO"
+        level = sys.argv[1].upper() if len(sys.argv) > 1 else "INFO" #type: ignore
     else:
-        level = level.upper()
+        level = level.upper() #type: ignore
 
     # Validate and get the logging level
     valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}

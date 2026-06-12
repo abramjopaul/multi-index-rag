@@ -235,7 +235,7 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
 
         # Search
         qvec = query_embedding.astype(np.float32).reshape(1, -1)
-        distances, indices = self._index.search(qvec, k)
+        distances, indices = self._index.search(qvec, k) #type: ignore
 
         # Build results
         hits = []
@@ -364,11 +364,11 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         self._index.nprobe = self.nprobe
 
         # Train
-        self._index.train(training_vectors)
+        self._index.train(training_vectors) #type: ignore
 
         # Add all vectors
         logger.info(f"Adding {len(embeddings)} vectors...")
-        self._index.add(embeddings_array)
+        self._index.add(embeddings_array) #type: ignore
 
         # Build ID map
         for idx, formula_data in enumerate(formulas):
