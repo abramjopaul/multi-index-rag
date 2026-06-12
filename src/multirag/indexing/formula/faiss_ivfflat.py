@@ -51,7 +51,7 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
     def __init__(
         self,
         index_path: str | Path,
-        corpus_path: str | Path = ANSWERS_JSONL,
+        corpus_path: str | Path = ANSWERS_JSONL, #type: ignore
         embedding_dir: Optional[str] = None,
         representation: str = "slt",
         nprobe: int = 64,

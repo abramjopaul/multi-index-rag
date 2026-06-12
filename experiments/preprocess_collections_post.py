@@ -47,8 +47,8 @@ def preprocess_posts() -> None:
     print(f"  - {QUESTIONS_JSONL}")
     print()
 
-    parser = PostParser(POSTS_XML, limit=None)
-    parser.to_jsonl(answers_path=ANSWERS_JSONL, questions_path=QUESTIONS_JSONL)
+    parser = PostParser(POSTS_XML, limit=None) #type: ignore
+    parser.to_jsonl(answers_path=ANSWERS_JSONL, questions_path=QUESTIONS_JSONL) #type: ignore
     print()
 
 
@@ -61,8 +61,8 @@ def preprocess_topics() -> None:
     print(f"Output: {TOPICS_JSONL}")
     print()
 
-    reader = TopicReader(TOPICS_XML)
-    reader.to_jsonl(output_path=TOPICS_JSONL)
+    reader = TopicReader(TOPICS_XML) #type: ignore
+    reader.to_jsonl(output_path=TOPICS_JSONL) #type: ignore
     print()
 
 
