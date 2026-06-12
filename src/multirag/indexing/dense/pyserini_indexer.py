@@ -1,4 +1,4 @@
-"""Pyserini-based dense (embedding) indexer using FAISS and Pyserini encoders."""
+"""Dense (embedding) indexer using SentenceTransformers and FAISS."""
 
 import os
 import random
@@ -6,27 +6,21 @@ import shutil
 from pathlib import Path
 from typing import Any, TextIO
 
+import faiss
 import numpy as np
 import orjson as json
-from bs4 import BeautifulSoup
-from pyserini.encode import AnceDocumentEncoder
-from pyserini.search.faiss import FaissSearcher
+from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
 from multirag.indexing.base import BaseIndexer
 
 
 def set_seed(seed: int = 42) -> None:
-    """Set seeds for reproducible results across numpy, torch, and Python stdlib.
-
-    Args:
-        seed: Random seed value.
-    """
+    """Set seeds for reproducible results across numpy, torch, and Python stdlib."""
     random.seed(seed)
     np.random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
 
-    # Set torch seeds if available
     try:
         import torch
 
@@ -39,24 +33,21 @@ def set_seed(seed: int = 42) -> None:
 
 
 class PyseriniDenseIndexer(BaseIndexer):
-    """Dense embedding-based indexer using Pyserini AnceDocumentEncoder and FAISS.
+    """Dense embedding indexer using SentenceTransformers and FAISS (dot-product).
 
-    Optimized for speed with:
-    - Reduced max_length (192 vs 256) for faster encoding
-    - Smaller batch_size (48 vs 64) for better CPU cache utilization
-    - orjson for faster JSON parsing
-    - Single-pass FAISS indexing (no temp embedding files)
-
-    Builds a FAISS index with files compatible with Pyserini's FaissSearcher:
+    Builds a FAISS IndexFlatIP index compatible with dot-product scoring:
     - {index_path}/index: Binary FAISS index file
     - {index_path}/docid: Text file with document IDs (one per line)
+
+    Default model: multi-qa-mpnet-base-dot-v1 — QA-optimized, trained on
+    MS MARCO, Natural Questions, TriviaQA, SQuAD. Designed for dot-product retrieval.
     """
 
     def __init__(
         self,
         index_path: str | Path,
         corpus_path: str | Path,
-        embedding_model: str = "castorini/ance-msmarco-passage",
+        embedding_model: str = "multi-qa-mpnet-base-dot-v1",
         batch_size: int = 48,
         device: str = "cpu",
         seed: int = 42,
@@ -67,61 +58,44 @@ class PyseriniDenseIndexer(BaseIndexer):
         self.batch_size = batch_size
         self.device = device
         self.seed = seed
-        self._embedder: AnceDocumentEncoder | None = None
-        self._searcher: FaissSearcher | None = None
+        self._model: SentenceTransformer | None = None
+        self._faiss_index: faiss.Index | None = None
+        self._docids: list[str] = []
 
     @property
     def index_exists(self) -> bool:
         """True if index directory exists and has FAISS index file."""
-        index_file = self.index_path / "index"
-        docid_file = self.index_path / "docid"
-        return index_file.exists() and docid_file.exists()
+        return (self.index_path / "index").exists() and (self.index_path / "docid").exists()
 
-    def _get_embedder(self) -> AnceDocumentEncoder:
-        """Lazy load and cache the document encoder model."""
-        if self._embedder is None:
-            self._embedder = AnceDocumentEncoder(
-                model_name=self.embedding_model,
-                device=self.device,
-            )
-        return self._embedder
+    def _get_model(self) -> SentenceTransformer:
+        if self._model is None:
+            self._model = SentenceTransformer(self.embedding_model, device=self.device)
+        return self._model
 
-    def _get_searcher(self) -> FaissSearcher:
-        """Lazy load and cache the FaissSearcher."""
-        if self._searcher is None:
-            self._searcher = FaissSearcher(str(self.index_path), self.embedding_model)
-        return self._searcher
+    def _load_index(self) -> tuple[faiss.Index, list[str]]:
+        if self._faiss_index is None:
+            self._faiss_index = faiss.read_index(str(self.index_path / "index"))
+            with open(self.index_path / "docid") as f:
+                self._docids = [line.strip() for line in f]
+        return self._faiss_index, self._docids #type: ignore
 
     def prepare_document(self, raw_doc: dict[str, Any]) -> dict[str, Any]:
-        """Convert raw doc to dense format: {id, contents}.
-
-        Parse HTML to plain text, similar to sparse indexing.
-        """
+        """Convert raw doc to indexable format: {id, contents}."""
         if "contents" in raw_doc:
             return {"id": str(raw_doc["id"]), "contents": raw_doc["contents"]}
-
-        # From answers.jsonl: body_text is HTML
-        body = raw_doc.get("body_text", "")
-        soup = BeautifulSoup(body, "html.parser")
-        text = soup.get_text(separator=" ", strip=True)
-        return {"id": str(raw_doc["id"]), "contents": text}
+        return {"id": str(raw_doc["id"]), "contents": raw_doc.get("body_text", "")}
 
     def index(self, force: bool = False, limit: int | None = None) -> None:
         """Build FAISS index from corpus using dense embeddings.
-
-        Creates files in index_path:
-        - index: Binary FAISS index
-        - docid: Text file with document IDs (one per line)
 
         Args:
             force: If True, rebuild index even if it exists.
             limit: Maximum number of documents to index. If None, index all documents.
         """
-        # Set seeds for reproducibility
         set_seed(self.seed)
 
         if self.index_exists and not force:
-            self._get_searcher()
+            self._load_index()
             return
 
         if self.index_exists and force:
@@ -129,58 +103,40 @@ class PyseriniDenseIndexer(BaseIndexer):
 
         self.index_path.mkdir(parents=True, exist_ok=True)
 
-        import faiss
-
-        embedder = self._get_embedder()
-
-        # Count total documents
-        total_docs = sum(1 for line in open(self.corpus_path) if line.strip())
-        total_docs = min(total_docs, limit) if limit else total_docs
-
+        model = self._get_model()
         docid_path = str(self.index_path / "docid")
 
         docid_file: TextIO | None = None
-        faiss_index = None
-        embedding_dim = None
+        faiss_index: faiss.Index | None = None
 
         try:
             with open(self.corpus_path) as f:
-                batch_texts = []
-                batch_docids = []
+                batch_texts: list[str] = []
+                batch_docids: list[str] = []
                 indexed_count = 0
 
-                with tqdm(
-                    total=total_docs, desc="Encoding documents", unit="doc"
-                ) as pbar:
+                with tqdm(total=limit, desc="Encoding documents", unit="doc") as pbar:
                     for line in f:
                         if not line.strip():
                             continue
 
-                        # Parse and prepare document
-                        if hasattr(json, "loads"):
-                            raw = json.loads(line)
-                        else:
-                            raw = json.loads(line.encode())
-                        doc = self.prepare_document(raw)
-
+                        doc = self.prepare_document(json.loads(line))
                         batch_texts.append(doc["contents"])
                         batch_docids.append(doc["id"])
                         indexed_count += 1
 
                         if len(batch_texts) >= self.batch_size:
-                            # Encode batch (max_length reduced from 256 to 192)
-                            embeddings = embedder.encode(batch_texts, max_length=192)
+                            embeddings = model.encode(
+                                batch_texts,
+                                convert_to_numpy=True,
+                                show_progress_bar=False,
+                            ).astype(np.float32)
 
-                            # Initialize FAISS index on first batch
                             if faiss_index is None:
-                                embedding_dim = embeddings.shape[1]
-                                faiss_index = faiss.IndexFlatIP(embedding_dim)
+                                faiss_index = faiss.IndexFlatIP(embeddings.shape[1])
                                 docid_file = open(docid_path, "w")
 
-                            # Add embeddings directly to FAISS (single-pass, no temp file)
-                            faiss_index.add(np.ascontiguousarray(embeddings.astype(np.float32)))  # type: ignore
-
-                            # Write document IDs
+                            faiss_index.add(np.ascontiguousarray(embeddings)) #type: ignore
                             for docid in batch_docids:
                                 docid_file.write(f"{docid}\n")  # type: ignore
                             docid_file.flush()  # type: ignore
@@ -189,68 +145,72 @@ class PyseriniDenseIndexer(BaseIndexer):
                             batch_texts = []
                             batch_docids = []
 
-                        # Stop if limit is reached
                         if limit and indexed_count >= limit:
                             break
 
-                    # Process remaining documents
+                    # Flush remaining batch
                     if batch_texts:
-                        embeddings = embedder.encode(batch_texts, max_length=192)
+                        embeddings = model.encode(
+                            batch_texts,
+                            convert_to_numpy=True,
+                            show_progress_bar=False,
+                        ).astype(np.float32)
 
                         if faiss_index is None:
-                            embedding_dim = embeddings.shape[1]
-                            faiss_index = faiss.IndexFlatIP(embedding_dim)
+                            faiss_index = faiss.IndexFlatIP(embeddings.shape[1])
                             docid_file = open(docid_path, "w")
 
-                        faiss_index.add(np.ascontiguousarray(embeddings.astype(np.float32)))  # type: ignore
+                        faiss_index.add(np.ascontiguousarray(embeddings))   #type: ignore
                         for docid in batch_docids:
                             docid_file.write(f"{docid}\n")  # type: ignore
                         docid_file.flush()  # type: ignore
 
                         pbar.update(len(batch_texts))
 
-            # Close docid file
             if docid_file is not None:
                 docid_file.close()
 
-            # Save FAISS index
             if faiss_index is not None:
-                index_path = str(self.index_path / "index")
-                faiss.write_index(faiss_index, index_path)
+                faiss.write_index(faiss_index, str(self.index_path / "index"))
 
         finally:
             if docid_file is not None and not docid_file.closed:
                 docid_file.close()
 
     def search(self, query: str, k: int = 10) -> list[dict[str, Any]]:
-        """Search and return top-k hits.
-
-        Returns results in format: [{"id": docid, "score": score}, ...]
-        """
-        searcher = self._get_searcher()
-        hits = searcher.search(query, k=k)
-        return [{"id": hit.docid, "score": hit.score} for hit in hits]  # type: ignore
+        """Search and return top-k hits."""
+        model = self._get_model()
+        index, docids = self._load_index()
+        q_emb = model.encode([query], convert_to_numpy=True).astype(np.float32)
+        scores, indices = index.search(q_emb, k) # type: ignore
+        return [
+            {"doc_id": docids[idx], "score": float(scores[0][i])}
+            for i, idx in enumerate(indices[0])
+            if idx >= 0
+        ]
 
     def batch_search(
         self,
         queries: list[tuple[str, str]],
         k: int = 10,
     ) -> dict[str, list[dict[str, Any]]]:
-        """Search multiple (qid, query) pairs. Returns {qid: [hit, ...]}.
-
-        Returns results in format: {qid: [{"doc_id": docid, "score": score}, ...]}
-        """
-        searcher = self._get_searcher()
-
-        # Extract qids and query strings
+        """Search multiple (qid, query) pairs. Returns {qid: [hit, ...]}."""
+        model = self._get_model()
+        index, docids = self._load_index()
         qids = [qid for qid, _ in queries]
-        query_texts = [query for _, query in queries]
-
-        # Use FaissSearcher's batch_search
-        hits_dict = searcher.batch_search(query_texts, qids, k=k)
-
-        # Convert result format to match sparse indexer
-        results = {}
-        for qid, hits in hits_dict.items():  # type: ignore
-            results[qid] = [{"doc_id": hit.docid, "score": hit.score} for hit in hits]
-        return results
+        texts = [text for _, text in queries]
+        q_embs = model.encode(
+            texts,
+            convert_to_numpy=True,
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+        ).astype(np.float32)
+        all_scores, all_indices = index.search(q_embs, k) #type: ignore
+        return {
+            qid: [
+                {"doc_id": docids[idx], "score": float(all_scores[i][j])}
+                for j, idx in enumerate(all_indices[i])
+                if idx >= 0
+            ]
+            for i, qid in enumerate(qids)
+        }

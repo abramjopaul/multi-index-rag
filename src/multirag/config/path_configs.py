@@ -89,7 +89,7 @@ QREL_TASK1_2022_OFFICIAL = QRELS_DIR / "qrel_task1_2022_official.tsv"
 
 # Experiments paths
 EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
-RUNS_DIR = EXPERIMENTS_DIR / "runs"
+RUNS_DIR = DATA_DIR / "runs"
 
 # Source code paths
 SRC_DIR = PROJECT_ROOT / "src"
@@ -112,8 +112,9 @@ QREL_2022_JSONL = QRELS_PROCESSED / "qrel_2022.jsonl"
 INDEX_DIR = DATA_DIR / "indices"
 SPARSE_INDEX_PATH = INDEX_DIR / "sparse_bm25"
 DENSE_INDEX_PATH = INDEX_DIR / "dense"
+FORMULA_FAISS_INDEX_DIR = INDEX_DIR / "formula"
 
-# Formula index paths
+# Formula embedding / FastText model paths
 FORMULA_INDEX_DIR = DATA_DIR / "formula-indexing"
 FASTTEXT_MODEL_DIR = FORMULA_INDEX_DIR / "fasttext"
 

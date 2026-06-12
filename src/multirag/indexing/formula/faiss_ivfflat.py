@@ -188,7 +188,7 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
             k: Number of results to return
 
         Returns:
-            List of top-k hits with: rank, answer_id, formula_id, distance, representation
+            List of top-k hits with: doc_id, formula_id, score, representation
         """
         # Generate query embedding
         try:
@@ -214,12 +214,12 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
         for rank, idx in enumerate(indices[0]):
             if idx in self.id_map:
                 answer_id, formula_id = self.id_map[idx]
+                dist = float(distances[0][rank])
                 hits.append(
                     {
-                        "rank": rank + 1,
-                        "answer_id": answer_id,
+                        "doc_id": answer_id,
                         "formula_id": formula_id,
-                        "distance": float(distances[0][rank]),
+                        "score": 1.0 / (1.0 + dist),
                         "representation": self.representation,
                     }
                 )

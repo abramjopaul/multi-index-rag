@@ -20,19 +20,6 @@ class IndexType(str, Enum):
     # ALL = "sparse_dense_formula"
 
 
-class MetricType(str, Enum):
-    """Available IR evaluation metrics from ranx.
-
-    Reference: https://amenra.github.io/ranx/metrics/
-    """
-
-    PRECISION = "precision"
-    RECALL = "recall"
-    MAP = "map"
-    MEAN_RECIPROCAL_RANK = "mrr"
-    NDCG = "ndcg"
-
-
 class RunConfig(BaseModel):
     """Configuration for a single retrieval run with W&B logging.
 
@@ -41,10 +28,6 @@ class RunConfig(BaseModel):
         index_type: Type(s) of index to use. Can be a single type (sparse, dense, formula)
                    or later a list for fusion systems (["sparse", "dense"]).
         num_hits: Number of hits/results to retrieve from the index per topic.
-        metrics: List of base metric names (without @k).
-                 Examples: ["nDCG", "Recall", "Precision", "MAP"]
-        k_values: List of k cutoff values for @k metrics (e.g., [5, 10, 100, 1000]).
-                 These apply to all metrics that support @k (nDCG, Precision, Recall, etc).
         index_corpus_limit: Optional limit on number of documents to index (for debugging).
                            None = use all documents in corpus.
         experiment_name: Optional experiment grouping for W&B (defaults to run_name).
@@ -60,14 +43,6 @@ class RunConfig(BaseModel):
         ge=1,
         description="Number of hits to retrieve from index per topic",
     )
-    metrics: list[str] = Field(
-        ...,
-        description="Base metric names (e.g., ['precsion', 'recall', 'map']). @k variants will be generated automatically.",
-    )
-    k_values: list[int] = Field(
-        default=[5, 10, 100, 1000],
-        description="List of k cutoff values for @k metrics",
-    )
     index_corpus_limit: int | None = Field(
         default=None, ge=1, description="Optional corpus size limit for indexing"
     )
@@ -77,6 +52,24 @@ class RunConfig(BaseModel):
     )
     experiment_name: str | None = Field(
         default=None, description="W&B experiment grouping (defaults to run_name)"
+    )
+
+    # Formula indexer fields (only used when index_type == "formula")
+    formula_representation: str = Field(
+        default="slt",
+        description="Formula representation to index: 'slt', 'opt', or 'slt_type'",
+    )
+    formula_index_path: str | None = Field(
+        default=None,
+        description="Path to store/load FAISS formula index. Defaults to data/indices/formula/<representation>",
+    )
+    formula_embedding_dir: str | None = Field(
+        default=None,
+        description="Directory containing trained FastText models. Defaults to data/formula-indexing",
+    )
+    formula_tsv_base_dir: str | None = Field(
+        default=None,
+        description="Base dir containing slt_representation_v3/ and opt_representation_v3/ TSV subdirs. Defaults to data/raw/collection/formula",
     )
 
     @field_validator("index_type")
@@ -101,58 +94,9 @@ class RunConfig(BaseModel):
 
         return v
 
-    @field_validator("metrics")
-    @classmethod
-    def validate_metrics(cls, v: list[str]) -> list[str]:
-        """Validate that all requested metrics are available in ranx."""
-        valid_metrics = {t.value for t in MetricType}
-
-        for metric in v:
-            if metric not in valid_metrics:
-                raise ValueError(
-                    f"Invalid metric '{metric}'. Must be one of: {valid_metrics}"
-                )
-
-        return v
-
-    @field_validator("k_values")
-    @classmethod
-    def validate_k_values(cls, v: list[int]) -> list[int]:
-        """Validate k_values are positive and sorted."""
-        if not v:
-            raise ValueError("k_values cannot be empty")
-
-        for k in v:
-            if k < 1:
-                raise ValueError(f"k_values must be positive, got: {k}")
-
-        return sorted(v)
-
     def get_experiment_name(self) -> str:
         """Get the experiment name, with fallback to run_name."""
         return self.experiment_name or self.run_name
-
-    def build_eval_metrics(self) -> list[str]:
-        """Build full metric names for ranx evaluation.
-
-        Combines base metrics with k_values to create strings like "nDCG@5", "Recall@100".
-        MAP, RR, Bpref, and NDCG_burges don't support @k and are added as-is.
-
-        Returns:
-            List of metric strings for ranx.evaluate()
-        """
-        eval_metrics = []
-
-        for metric in self.metrics:
-            # if metric in ["map", "rr", "recall", "precision", "mrr"]:  # Metrics that don't use @k
-            #     # These metrics don't use @k
-            #     eval_metrics.append(metric)
-            # else:
-            # Add @k variants for metrics that support it
-            for k in self.k_values:
-                eval_metrics.append(f"{metric}@{k}")
-
-        return eval_metrics
 
 
 class RunConfigManager:

@@ -1,0 +1,10 @@
+run_name: "dense_mpnet"
+index_type: "dense"
+
+# Retrieval parameters
+num_hits: 1000
+
+# Optional parameters
+index_corpus_limit: 100  # null = use all documents; set to e.g. 1000 for debugging
+force_rebuild: true
+experiment_name: "Dense Index Runs"

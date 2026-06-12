@@ -4,7 +4,9 @@
 # Formula FAISS indexer using IVFScalarQuantizer compression.
 # Suitable for memory-constrained scenarios with acceptable accuracy trade-off.
 
+import csv
 import json
+import sys
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -15,10 +17,15 @@ from tqdm import tqdm
 
 from multirag.config.path_configs import ANSWERS_JSONL
 from multirag.embedding.formula_model_manager import FastTextModelManager
-from multirag.formula_search import TokenIDManager, TupleTokenizationMode, TupleTokenizer
+from multirag.formula_search import (
+    TokenIDManager,
+    TupleTokenizationMode,
+    TupleTokenizer,
+    extract_tuples_from_mathml_direct,
+)
+from multirag.formula_search.latex_mml import LatexToMathML, _get_optimal_workers
 from multirag.formula_search.tuple_extraction import (
     encode_tuples,
-    extract_tuples_from_latex_subprocess,
 )
 from multirag.indexing.base import BaseIndexer
 
@@ -45,8 +52,8 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
 
     REPRESENTATIONS = ["slt", "opt", "slt_type"]
     DIMENSION = 300
-    NLIST = 32  # Number of clusters (sqrt(28M) ≈ 5.3K, rounded to power of 2)
-    NPROBE = 32  # Number of clusters to search (tune: 1-256)
+    NLIST = 16384  # Number of clusters (4·√N and 16·√N. With √28M ≈ 5,300) ie 16384, 32768, or 65536.
+    NPROBE = 32  # Number of clusters to search. Sweep upward (32 → 64 → 128 → 256
     QUANTIZER_TYPE = faiss.ScalarQuantizer.QT_fp16  # 8-bit or 16-bit quantization
 
     def __init__(
@@ -58,6 +65,7 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         quantizer_bits: str = "fp16",
         nprobe: int = 64,
         force_rebuild: bool = False,
+        formula_tsv_base_dir: Optional[str] = None,
     ):
         """
         Initialize IVFScalarQuantizer formula indexer for a single representation.
@@ -71,12 +79,18 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
             quantizer_bits: Quantization type - 'fp16' (8 bytes) or '8bit' (4 bytes)
             nprobe: Number of clusters to search (higher = more accurate but slower)
             force_rebuild: Force rebuild even if indices exist
+            formula_tsv_base_dir: Base directory containing slt_representation_v3/ and
+                                  opt_representation_v3/ subdirectories. When set,
+                                  pre-computed MathML is read directly from TSV files,
+                                  bypassing all latexmlmath subprocess calls during indexing.
+                                  Example: "data/raw/collection/formula"
         """
         self.index_path = Path(index_path)
         self.index_path.mkdir(parents=True, exist_ok=True)
 
         self.corpus_path = Path(corpus_path)
         self.embedding_dir = Path(embedding_dir) if embedding_dir else None
+        self.formula_tsv_base_dir = Path(formula_tsv_base_dir) if formula_tsv_base_dir else None
         self.nprobe = nprobe
         self.force_rebuild = force_rebuild
 
@@ -202,7 +216,7 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
             k: Number of results to return
 
         Returns:
-            List of top-k hits with: rank, answer_id, formula_id, distance, representation
+            List of top-k hits with: doc_id, formula_id, score, representation
         """
         # Generate query embedding
         try:
@@ -228,12 +242,12 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         for rank, idx in enumerate(indices[0]):
             if idx in self.id_map:
                 answer_id, formula_id = self.id_map[idx]
+                dist = float(distances[0][rank])
                 hits.append(
                     {
-                        "rank": rank + 1,
-                        "answer_id": answer_id,
+                        "doc_id": answer_id,
                         "formula_id": formula_id,
-                        "distance": float(distances[0][rank]),
+                        "score": 1.0 / (1.0 + dist),
                         "representation": self.representation,
                     }
                 )
@@ -391,20 +405,20 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         # Validate embedding_dir
         if not self.embedding_dir:
             raise ValueError("embedding_dir not configured")
-        
+
         embedding_dir = Path(self.embedding_dir)
-        
+
         # Setup model paths (organized in subdirectories: slt/, opt/, slt_type/)
         tree_type_suffix = self.representation.lower().replace("-", "_")
         model_file = embedding_dir / tree_type_suffix / f"fasttext_model_{tree_type_suffix}.bin"
         metadata_file = embedding_dir / tree_type_suffix / f"training_metadata_{tree_type_suffix}.json"
-        
+
         # Verify model file exists
         if not model_file.exists():
             raise FileNotFoundError(f"FastText model not found: {model_file}")
-        
+
         logger.info(f"Loading FastText model for {self.representation}: {model_file}")
-        
+
         # Load model and metadata
         model_manager = FastTextModelManager(
             model_path=str(model_file),
@@ -412,12 +426,12 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
             corpus_path="",  # Not needed for inference
         )
         model_manager.load()
-        
+
         # Get tokenization configuration from metadata
         metadata = model_manager.get_stats()
         embedding_type_name = metadata.get("embedding_type", "Both_Separated")
         tokenize_number = metadata.get("tokenize_number", True)
-        
+
         # Map embedding type name to enum
         embedding_type_map = {
             "Both_Separated": TupleTokenizationMode.Both_Separated,
@@ -426,17 +440,16 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         embedding_type = embedding_type_map.get(
             embedding_type_name, TupleTokenizationMode.Both_Separated
         )
-        
+
         # Create fresh TokenIDManager for tokenization
-        # (encoder_maps are for reference; we generate tokens fresh during inference)
         token_id_manager = TokenIDManager()
         tuple_tokenizer = TupleTokenizer(
             token_id_manager=token_id_manager,
             embedding_type=embedding_type,
             tokenize_number=tokenize_number,
         )
-        
-        # Determine tree type for tuple extraction (cast string to Literal)
+
+        # Determine tree type for tuple extraction
         tree_type_mapping = {
             "slt": "SLT",
             "opt": "OPT",
@@ -444,55 +457,152 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         }
         tree_type_str = tree_type_mapping.get(self.representation, "SLT")
         tree_type = tree_type_str  # type: ignore
-        
-        embeddings = []
+
+        # Fast path: use pre-computed MathML from TSV files (no subprocess)
+        if self._tsv_dir is not None:
+            logger.info(f"Using pre-computed MathML from {self._tsv_dir} (bypassing latexmlmath)")
+            return self._load_embeddings_from_tsv(formulas, model_manager, tuple_tokenizer, tree_type)
+
+        # Slow path: convert LaTeX → MathML via latexmlmath subprocess
+        logger.warning(
+            "formula_tsv_base_dir not set — falling back to latexmlmath subprocess. "
+            "Set formula_tsv_base_dir='data/raw/collection/formula' to use pre-computed MathML."
+        )
+        embeddings: list[np.ndarray] = []
         failed_count = 0
-        
+
         logger.info(f"Generating embeddings for {len(formulas)} formulas...")
-        
-        for formula_data in tqdm(formulas, desc=f"Embedding {self.representation}"):
-            try:
-                latex = formula_data.get("latex", "")
-                if not latex:
-                    # No LaTeX, use zero vector
-                    embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
-                    continue
-                
-                # Step 1: LaTeX → Tuples
-                tuples = extract_tuples_from_latex_subprocess(latex, tree_type=tree_type)  # type: ignore
-                
-                if not tuples:
-                    # Tuple extraction failed, use zero vector
+
+        batch_size = 256
+        for batch_start in tqdm(range(0, len(formulas), batch_size), desc=f"Embedding {self.representation}"):
+            batch_formulas = formulas[batch_start : batch_start + batch_size]
+            batch_tex = [formula_data.get("latex", "") for formula_data in batch_formulas]
+
+            mathml_results = LatexToMathML.convert_batch2(batch_tex, num_workers=_get_optimal_workers())
+
+            for formula_data, mathml in zip(batch_formulas, mathml_results):
+                try:
+                    if not formula_data.get("latex", ""):
+                        embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
+                        continue
+
+                    if not mathml:
+                        embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
+                        failed_count += 1
+                        continue
+
+                    tuples = extract_tuples_from_mathml_direct(mathml, tree_type=tree_type)  # type: ignore
+
+                    if not tuples:
+                        embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
+                        failed_count += 1
+                        continue
+
+                    encoded_sequence = encode_tuples(tuples, tuple_tokenizer)
+
+                    if not encoded_sequence:
+                        embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
+                        failed_count += 1
+                        continue
+
+                    embedding_list = model_manager.get_sentence_vector(encoded_sequence)
+                    embedding = np.array(embedding_list, dtype=np.float32)
+                    embeddings.append(embedding)
+
+                except Exception as e:
+                    logger.warning(f"Failed to generate embedding for formula: {e}")
                     embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
                     failed_count += 1
-                    continue
-                
-                # Step 2: Tuples → Encoded tokens
-                encoded_sequence = encode_tuples(tuples, tuple_tokenizer)
-                
-                if not encoded_sequence:
-                    # Encoding failed, use zero vector
-                    embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
-                    failed_count += 1
-                    continue
-                
-                # Step 3: Encoded tokens → Embedding vector
-                embedding_list = model_manager.get_sentence_vector(encoded_sequence)
-                embedding = np.array(embedding_list, dtype=np.float32)
-                embeddings.append(embedding)
-                
-            except Exception as e:
-                logger.warning(f"Failed to generate embedding for formula: {e}")
-                embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
-                failed_count += 1
-        
+
         if failed_count > 0:
             logger.warning(
                 f"Failed to generate {failed_count}/{len(formulas)} embeddings, "
                 f"using zero vectors as fallback"
             )
-        
+
         logger.info(f"Generated {len(embeddings)} embeddings")
+        return embeddings
+
+    @property
+    def _tsv_dir(self) -> Optional[Path]:
+        """Return the TSV directory for this representation, or None if not configured."""
+        if not self.formula_tsv_base_dir:
+            return None
+        subdir = "opt_representation_v3" if self.representation == "opt" else "slt_representation_v3"
+        tsv_dir = self.formula_tsv_base_dir / subdir
+        return tsv_dir if tsv_dir.exists() else None
+
+    def _load_embeddings_from_tsv(
+        self,
+        formulas: list[dict],
+        model_manager: FastTextModelManager,
+        tuple_tokenizer: "TupleTokenizer",
+        tree_type: str,
+    ) -> list[np.ndarray]:
+        """Generate embeddings by reading pre-computed MathML from TSV files.
+
+        Streams through TSV files in numeric order and looks up each formula by id,
+        calling extract_tuples_from_mathml_direct instead of latexmlmath.
+        Only one TSV file (~56 MB) is held in memory at a time.
+
+        Args:
+            formulas: Formula metadata list with 'formula_id' and 'latex' fields
+            model_manager: Loaded FastText model manager
+            tuple_tokenizer: Configured TupleTokenizer
+            tree_type: "SLT", "OPT", or "SLT-TYPE"
+
+        Returns:
+            List of 300-dim float32 embedding vectors (zero vector on failure)
+        """
+        csv.field_size_limit(sys.maxsize)
+        tsv_dir = self._tsv_dir
+        if tsv_dir is None:
+            raise ValueError(f"TSV directory not found under {self.formula_tsv_base_dir}")
+
+        # Build formula_id → position index for O(1) lookup
+        fid_to_idx: dict[str, int] = {str(f["formula_id"]): i for i, f in enumerate(formulas)}
+
+        embeddings: list[np.ndarray] = [np.zeros(self.DIMENSION, dtype=np.float32)] * len(formulas)
+        failed_count = 0
+        found_count = 0
+
+        tsv_files = sorted(tsv_dir.glob("*.tsv"), key=lambda p: int(p.stem))
+        logger.info(f"Streaming {len(tsv_files)} TSV files from {tsv_dir}")
+
+        for tsv_file in tqdm(tsv_files, desc=f"TSV→embed ({self.representation})"):
+            with open(tsv_file, newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    fid = row["id"]
+                    if fid not in fid_to_idx:
+                        continue
+
+                    idx = fid_to_idx[fid]
+                    mathml = row["formula"].strip()
+
+                    try:
+                        tuples = extract_tuples_from_mathml_direct(mathml, tree_type=tree_type)  # type: ignore
+                        if not tuples:
+                            failed_count += 1
+                            continue
+
+                        encoded_sequence = encode_tuples(tuples, tuple_tokenizer)
+                        if not encoded_sequence:
+                            failed_count += 1
+                            continue
+
+                        embedding_list = model_manager.get_sentence_vector(encoded_sequence)
+                        embeddings[idx] = np.array(embedding_list, dtype=np.float32)
+                        found_count += 1
+
+                    except Exception as e:
+                        logger.warning(f"Failed embedding for formula_id={fid}: {e}")
+                        failed_count += 1
+
+        logger.info(
+            f"TSV embedding complete: {found_count} embedded, {failed_count} failed, "
+            f"{len(formulas) - found_count - failed_count} not found in TSV"
+        )
         return embeddings
 
     def _save_index_to_disk(self) -> None:
@@ -604,21 +714,24 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         tree_type = tree_type_str  # type: ignore
 
         try:
-            # Step 1: LaTeX → Tuples
-            tuples = extract_tuples_from_latex_subprocess(query_latex, tree_type=tree_type)  # type: ignore
+            mathml = LatexToMathML.convert_to_mathml2(query_latex)
+
+            if not mathml:
+                logger.debug(f"No MathML produced for query: {query_latex}")
+                return np.zeros(self.DIMENSION, dtype=np.float32)
+
+            tuples = extract_tuples_from_mathml_direct(mathml, tree_type=tree_type)  # type: ignore
 
             if not tuples:
                 logger.debug(f"No tuples extracted from query: {query_latex}")
                 return np.zeros(self.DIMENSION, dtype=np.float32)
 
-            # Step 2: Tuples → Encoded tokens
             encoded_sequence = encode_tuples(tuples, self._query_tokenizer)
 
             if not encoded_sequence:
                 logger.debug(f"Failed to encode tuples for query: {query_latex}")
                 return np.zeros(self.DIMENSION, dtype=np.float32)
 
-            # Step 3: Encoded tokens → Embedding
             embedding_list = self._query_model_manager.get_sentence_vector(encoded_sequence)
             return np.array(embedding_list, dtype=np.float32)
 

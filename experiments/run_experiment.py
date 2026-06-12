@@ -15,6 +15,12 @@ Usage:
     poetry run python experiments/run_experiment.py configs/experiments/run_config.yaml --dry-run
 """
 
+import os
+
+# Must be set before any OpenMP or JVM library loads.
+# Prevents SIGSEGV crash when PyTorch (libomp) and JVM coexist on macOS/ARM.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import argparse
 import logging
 import sys
@@ -31,6 +37,10 @@ from logging_config import configure_logging
 from multirag.config import RunConfigManager
 from multirag.config.path_configs import (
     ANSWERS_JSONL,
+    DENSE_INDEX_PATH,
+    FORMULA_DIR,
+    FORMULA_FAISS_INDEX_DIR,
+    FORMULA_INDEX_DIR,
     QREL_TASK1_2022_OFFICIAL,
     RUNS_DIR,
     SPARSE_INDEX_PATH,
@@ -41,8 +51,6 @@ from multirag.evaluation.metrics import (
     generate_run_file,
     print_evaluation_report,
 )
-from multirag.indexing.sparse import PyseriniSparseIndexer
-
 # Configure logging (accepts CLI arg or defaults to INFO)
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -52,6 +60,7 @@ def create_indexer(
     index_type: str | list[str],
     index_corpus_limit: int | None = None,
     force_rebuild: bool = False,
+    **kwargs,
 ):
     """Factory function to create an indexer based on type.
 
@@ -75,10 +84,12 @@ def create_indexer(
 
     # Single index type
     if index_type == "sparse":
+        from multirag.indexing.sparse import PyseriniSparseIndexer
+
         logger.info(f"Creating PyseriniSparseIndexer with path={SPARSE_INDEX_PATH}")
         indexer = PyseriniSparseIndexer(
-            index_path=SPARSE_INDEX_PATH,
-            corpus_path=ANSWERS_JSONL,
+            index_path=SPARSE_INDEX_PATH, #type: ignore
+            corpus_path=ANSWERS_JSONL,  #type: ignore
         )
         logger.info(
             f"Indexing corpus (limit={index_corpus_limit}, force_rebuild={force_rebuild})..."
@@ -88,16 +99,48 @@ def create_indexer(
         return indexer
 
     elif index_type == "dense":
-        raise NotImplementedError(
-            "Dense indexer (embedding-based retrieval) not yet implemented. "
-            "Please use 'sparse' index_type for now."
+        from multirag.indexing.dense import PyseriniDenseIndexer
+
+        logger.info(f"Creating PyseriniDenseIndexer with path={DENSE_INDEX_PATH}")
+        indexer = PyseriniDenseIndexer(
+            index_path=DENSE_INDEX_PATH,  # type: ignore
+            corpus_path=ANSWERS_JSONL,  # type: ignore
         )
+        logger.info(
+            f"Indexing corpus (limit={index_corpus_limit}, force_rebuild={force_rebuild})..."
+        )
+        indexer.index(force=force_rebuild, limit=index_corpus_limit)
+        logger.info("Indexing complete")
+        return indexer
 
     elif index_type == "formula":
-        raise NotImplementedError(
-            "Formula indexer (formula-aware retrieval) not yet implemented. "
-            "Please use 'sparse' index_type for now."
+        from multirag.indexing.formula import FormulaFAISSIndexerIVFScalarQuantizer
+
+        config = kwargs.get("config")
+        if config is None:
+            raise ValueError("create_indexer() requires 'config' kwarg for formula index_type")
+
+        representation = config.formula_representation
+        index_path = config.formula_index_path or str(
+            FORMULA_FAISS_INDEX_DIR / f"sq_{representation}"
         )
+        embedding_dir = config.formula_embedding_dir or str(FORMULA_INDEX_DIR)
+        tsv_base_dir = config.formula_tsv_base_dir or str(FORMULA_DIR)
+
+        logger.info(
+            f"Creating FormulaFAISSIndexerIVFScalarQuantizer: "
+            f"representation={representation}, index_path={index_path}"
+        )
+        indexer = FormulaFAISSIndexerIVFScalarQuantizer(
+            index_path=index_path,
+            corpus_path=ANSWERS_JSONL,  #type: ignore
+            embedding_dir=embedding_dir,
+            representation=representation,
+            formula_tsv_base_dir=tsv_base_dir,
+            force_rebuild=force_rebuild,
+        )
+        indexer.index(force=force_rebuild, limit=index_corpus_limit)
+        return indexer
 
     else:
         raise ValueError(
@@ -151,9 +194,8 @@ Examples:
         # Load and validate config
         logger.info(f"Loading config from {config_path}")
         config = RunConfigManager.from_yaml(config_path)
-        config.run_name = config.run_name.replace(
-            " ", "_"
-        )  # Convert "BM25 Sparse Baseline" to "BM25_Sparse_Baseline"
+        config.run_name = config.run_name.replace(" ", "_")
+        config.run_name = f"{config.run_name}_{datetime.now().strftime('%Y%m%d')}"
         logger.info(f"Config loaded successfully: {config.run_name}")
 
         # Initialize W&B (unless dry-run)
@@ -170,7 +212,7 @@ Examples:
                 ),
                 config=config.model_dump(),
             )
-            logger.info(f"W&B initialized: {wandb.run.url}")
+            logger.info(f"W&B initialized: {wandb.run.url}")  #type: ignore
         else:
             logger.info("Dry-run mode: W&B logging disabled")
 
@@ -180,6 +222,7 @@ Examples:
             index_type=config.index_type,
             index_corpus_limit=config.index_corpus_limit,
             force_rebuild=config.force_rebuild,
+            config=config,
         )
 
         # Generate run file
@@ -192,16 +235,13 @@ Examples:
             run_name=config.run_name,
             k=config.num_hits,
         )
-        logger.info(f"Run file generated: {run_path} ({run_path.stat().st_size} bytes)")
+        logger.info(f"Run file generated: {run_path} ({run_path.stat().st_size} bytes)")  #type: ignore
 
         # Evaluate metrics
         logger.info("Evaluating run against qrels...")
-        eval_metrics = config.build_eval_metrics()
-        logger.debug(f"Metrics to evaluate: {eval_metrics}")
         metrics_dict = evaluate_run(
             qrels_path=QREL_TASK1_2022_OFFICIAL,
             run_path=run_path,
-            metrics=eval_metrics,
         )
         logger.info("Evaluation complete")
 
@@ -239,7 +279,6 @@ Examples:
             qrels_path=QREL_TASK1_2022_OFFICIAL,
             run_path=run_path,
             run_name=config.run_name,
-            metrics=eval_metrics,
         )
 
         # Summary
@@ -247,7 +286,7 @@ Examples:
         logger.info(f"Experiment completed successfully: {config.run_name}")
         logger.info(f"Run file: {run_path}")
         if not args.dry_run:
-            logger.info(f"W&B URL: {wandb.run.url}")
+            logger.info(f"W&B URL: {wandb.run.url}")  #type: ignore
         logger.info("=" * 70)
 
         # Finalize W&B
