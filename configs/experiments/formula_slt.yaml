@@ -1,0 +1,21 @@
+run_name: "formula_slt_sq"
+index_type: "formula"
+
+# Retrieval parameters
+num_hits: 1000
+
+# Formula-specific parameters
+formula_representation: "slt"   # "slt", "opt", or "slt_type"
+
+# Paths — leave null to use defaults:
+#   formula_index_path    → data/indices/formula/sq_opt
+#   formula_embedding_dir → data/formula-indexing
+#   formula_tsv_base_dir  → data/raw/collection/formula
+formula_index_path: null
+formula_embedding_dir: null
+formula_tsv_base_dir: null
+
+# Optional
+index_corpus_limit: null
+force_rebuild: true
+experiment_name: "Formula Index Runs"
