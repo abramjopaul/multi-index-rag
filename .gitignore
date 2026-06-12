@@ -26,3 +26,5 @@ __pycache__/
 # OS files
 .DS_Store
 external/TangentCFT
+
+hs_err_pid*.log

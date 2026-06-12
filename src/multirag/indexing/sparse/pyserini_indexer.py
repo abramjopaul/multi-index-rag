@@ -5,7 +5,6 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from bs4 import BeautifulSoup
 from pyserini.index.lucene import LuceneIndexer
 from pyserini.search.lucene import LuceneSearcher
 from tqdm import tqdm
@@ -45,11 +44,7 @@ class PyseriniSparseIndexer(BaseIndexer):
         """Convert raw doc to Pyserini format: {id, contents}."""
         if "contents" in raw_doc:
             return {"id": str(raw_doc["id"]), "contents": raw_doc["contents"]}
-        # From answers.jsonl: body_text is HTML (p, a, span.math-container, ul, li, etc.)
-        body = raw_doc.get("body_text", "")
-        soup = BeautifulSoup(body, "html.parser")
-        text = soup.get_text(separator=" ", strip=True)
-        return {"id": str(raw_doc["id"]), "contents": text}
+        return {"id": str(raw_doc["id"]), "contents": raw_doc.get("body_text", "")}
 
     def index(self, force: bool = False, limit: int | None = None) -> None:
         """Build Lucene index from JSONL corpus. Skips if index exists unless force=True.
@@ -66,14 +61,10 @@ class PyseriniSparseIndexer(BaseIndexer):
         indexer = self._get_indexer(append=False)
         batch_size = 1000
 
-        # Count lines upfront so tqdm can show total (or use limit if set)
-        total_docs = sum(1 for line in open(self.corpus_path) if line.strip())
-        total_docs = min(total_docs, limit) if limit else total_docs
-
         with open(self.corpus_path) as f:
             batch = []
             indexed_count = 0
-            with tqdm(total=total_docs, desc="Indexing", unit="doc") as pbar:
+            with tqdm(total=limit, desc="Indexing", unit="doc") as pbar:
                 for line in f:
                     if not line.strip():
                         continue
@@ -108,7 +99,7 @@ class PyseriniSparseIndexer(BaseIndexer):
         """Search and return top-k hits."""
         searcher = self._get_searcher()
         hits = searcher.search(query, k=k)
-        return [{"id": hit.docid, "score": hit.score} for hit in hits]
+        return [{"doc_id": hit.docid, "score": hit.score} for hit in hits]
 
     def batch_search(
         self,
