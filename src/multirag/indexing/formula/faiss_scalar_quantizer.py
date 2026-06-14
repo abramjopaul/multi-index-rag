@@ -66,6 +66,7 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         nprobe: int = 64,
         force_rebuild: bool = False,
         formula_tsv_base_dir: Optional[str] = None,
+        device: str = "auto",
     ):
         """
         Initialize IVFScalarQuantizer formula indexer for a single representation.
@@ -93,6 +94,7 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         self.formula_tsv_base_dir = Path(formula_tsv_base_dir) if formula_tsv_base_dir else None
         self.nprobe = nprobe
         self.force_rebuild = force_rebuild
+        self.device = device
 
         # Set quantizer type
         if quantizer_bits == "fp16":
@@ -118,8 +120,22 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
 
         logger.info(
             f"Initialized IVFScalarQuantizer indexer: {self.index_path} "
-            f"(representation={self.representation}, nlist={self.NLIST}, nprobe={self.nprobe}, quantizer={quantizer_bits})"
+            f"(representation={self.representation}, nlist={self.NLIST}, nprobe={self.nprobe}, "
+            f"quantizer={quantizer_bits}, device={self._resolved_device()})"
         )
+
+    def _resolved_device(self) -> str:
+        """Return the device to use for FAISS GPU operations.
+
+        Detects faiss-gpu by probing StandardGpuResources (only present in faiss-gpu,
+        not faiss-cpu). Falls back to 'cpu' when faiss-gpu is not installed or when
+        device is explicitly set to 'cpu'. Note: FAISS GPU is CUDA-only (no MPS).
+        """
+        if self.device != "auto":
+            return self.device
+        if getattr(faiss, "StandardGpuResources", None) is not None:
+            return "cuda"
+        return "cpu"
 
     def prepare_document(self, raw_doc: dict[str, Any]) -> dict[str, Any]:
         """Convert raw answer document to indexer format.
@@ -358,17 +374,27 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         quantizer = faiss.IndexFlat(self.DIMENSION)
         # Then create the IVF index with scalar quantization
         # Constructor: (quantizer_index, dimension, nlist, quantizer_type)
-        self._index = faiss.IndexIVFScalarQuantizer(
+        cpu_index = faiss.IndexIVFScalarQuantizer(
             quantizer, self.DIMENSION, self.NLIST, self.quantizer_type
         )
+
+        # Train on GPU if available (10-50x faster for k-means with NLIST=16384)
+        if self._resolved_device() == "cuda":
+            logger.info("Moving index to GPU for training...")
+            res = getattr(faiss, "StandardGpuResources")()
+            gpu_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)  # type: ignore[attr-defined]
+            gpu_index.train(training_vectors)
+            self._index = faiss.index_gpu_to_cpu(gpu_index)  # type: ignore[attr-defined]
+            logger.info("Training complete; index moved back to CPU")
+        else:
+            cpu_index.train(training_vectors)  # type: ignore
+            self._index = cpu_index
+
         self._index.nprobe = self.nprobe
 
-        # Train
-        self._index.train(training_vectors) #type: ignore
-
-        # Add all vectors
+        # Add all vectors on CPU (28M × 300 × 4 bytes ≈ 33 GB — won't fit in VRAM)
         logger.info(f"Adding {len(embeddings)} vectors...")
-        self._index.add(embeddings_array) #type: ignore
+        self._index.add(embeddings_array)  # type: ignore
 
         # Build ID map
         for idx, formula_data in enumerate(formulas):
