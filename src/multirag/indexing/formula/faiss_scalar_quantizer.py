@@ -31,6 +31,8 @@ from multirag.indexing.base import BaseIndexer
 
 logger = logging.getLogger(__name__)
 
+_TSV_MINI_BATCH = 1024
+
 
 class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
     """
@@ -138,14 +140,7 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         return "cpu"
 
     def prepare_document(self, raw_doc: dict[str, Any]) -> dict[str, Any]:
-        """Convert raw answer document to indexer format.
-
-        Args:
-            raw_doc: Answer document from answers.jsonl
-
-        Returns:
-            Formatted document with extracted formulas
-        """
+        """Convert raw answer document to indexer format."""
         return {
             "answer_id": raw_doc.get("id"),
             "parent_id": raw_doc.get("parent_id"),
@@ -155,16 +150,60 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
     def index(self, force: bool = False, limit: int | None = None) -> None:
         """Build FAISS index for this representation.
 
+        When formula_tsv_base_dir is set, uses a streaming TSV path that processes
+        one TSV file at a time and checkpoints after each file, avoiding the ~70 GB
+        peak memory of the bulk path.
+
         Args:
             force: If True, rebuild even if index exists
-            limit: Maximum number of answers to index (for testing)
+            limit: Maximum number of answers to load metadata for (for testing)
         """
         if force:
             self.force_rebuild = True
 
-        # Check if index already exists
         index_file = self.index_path / f"formula_index_sq_{self.representation}.faiss"
 
+        # --- Streaming TSV path ---
+        if self._tsv_dir is not None:
+            if not self.force_rebuild:
+                cp = self._load_tsv_checkpoint()
+                all_tsv = sorted(self._tsv_dir.glob("*.tsv"), key=lambda p: int(p.stem))
+                if all_tsv and set(cp.get("processed_tsv_files", [])) == {f.name for f in all_tsv}:
+                    logger.info("Index already complete. Loading from disk...")
+                    self._load_index_from_disk()
+                    return
+
+            if not self.embedding_dir or not self.embedding_dir.exists():
+                raise ValueError(
+                    f"Embedding directory not found: {self.embedding_dir}. "
+                    "Please generate embeddings first using formula_embedder.py"
+                )
+
+            # Build formula_id → (answer_id, formula_id) mapping
+            logger.info("Building formula ID → metadata mapping from answers.jsonl...")
+            fid_to_meta: dict[str, tuple[str, str]] = {}
+            with open(self.corpus_path) as f:
+                for line_idx, line in enumerate(tqdm(f, desc="Loading formula metadata")):
+                    if limit is not None and line_idx >= limit:
+                        break
+                    try:
+                        answer = json.loads(line)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Skipping malformed JSON at line {line_idx}")
+                        continue
+                    answer_id = answer.get("id")
+                    for formula_obj in answer.get("formulas", []):
+                        formula_id = str(formula_obj.get("formula_id"))
+                        fid_to_meta[formula_id] = (answer_id, formula_id)
+
+            logger.info(f"Loaded metadata for {len(fid_to_meta):,} formulas")
+
+            model_manager, tuple_tokenizer, tree_type = self._setup_model_and_tokenizer()
+            self._build_faiss_index_from_tsv(fid_to_meta, model_manager, tuple_tokenizer, tree_type)
+            logger.info("Streaming TSV indexing complete")
+            return
+
+        # --- Non-TSV (bulk) path ---
         if index_file.exists() and not self.force_rebuild:
             logger.info("Index already exists. Loading from disk...")
             self._load_index_from_disk()
@@ -172,22 +211,17 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
 
         logger.info(f"Building IVFScalarQuantizer index for {self.representation}...")
 
-        # Step 1: Load formulas
         formulas = []
-        embeddings = None
-
         logger.info("Loading formulas from answers.jsonl...")
         with open(self.corpus_path) as f:
             for line_idx, line in enumerate(tqdm(f, desc="Loading formulas")):
-                if limit and line_idx >= limit:
+                if limit is not None and line_idx >= limit:
                     break
-
                 try:
                     answer = json.loads(line)
                 except json.JSONDecodeError:
                     logger.warning(f"Skipping malformed JSON at line {line_idx}")
                     continue
-
                 answer_id = answer.get("id")
                 for formula_obj in answer.get("formulas", []):
                     formula_id = formula_obj.get("formula_id")
@@ -202,23 +236,18 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
 
         logger.info(f"Loaded {len(formulas)} formulas")
 
-        # Step 2: Load pre-computed embeddings
-        logger.info(f"Loading embeddings for {self.representation}...")
-        if self.embedding_dir and self.embedding_dir.exists():
-            embeddings = self._load_embeddings(formulas)
-        else:
+        if not self.embedding_dir or not self.embedding_dir.exists():
             raise ValueError(
                 f"Embedding directory not found: {self.embedding_dir}. "
                 "Please generate embeddings first using formula_embedder.py"
             )
 
+        embeddings = self._load_embeddings(formulas)
+
         if embeddings is None or len(embeddings) == 0:
             raise ValueError(f"No embeddings found for {self.representation}")
 
-        # Step 3: Build index
         self._build_faiss_index(embeddings, formulas)
-
-        # Step 4: Save index to disk
         self._save_index_to_disk()
         logger.info("Indexing complete")
 
@@ -226,22 +255,13 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         """Search index and return top-k hits for LaTeX query formula.
 
         Pipeline: LaTeX → tuples → encoded tokens → FastText embedding → FAISS search
-
-        Args:
-            query: Query LaTeX formula string
-            k: Number of results to return
-
-        Returns:
-            List of top-k hits with: doc_id, formula_id, score, representation
         """
-        # Generate query embedding
         try:
             query_embedding = self._generate_query_embedding(query)
         except Exception as e:
             logger.warning(f"Failed to generate query embedding for '{query}': {e}")
             return []
 
-        # Load index if needed
         if self._index is None:
             self._load_index_from_disk()
 
@@ -249,11 +269,9 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
             logger.warning("Index not available")
             return []
 
-        # Search
         qvec = query_embedding.astype(np.float32).reshape(1, -1)
-        distances, indices = self._index.search(qvec, k) #type: ignore
+        distances, indices = self._index.search(qvec, k)  # type: ignore
 
-        # Build results
         hits = []
         for rank, idx in enumerate(indices[0]):
             if idx in self.id_map:
@@ -275,105 +293,317 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         queries: list[tuple[str, str]],
         k: int = 10,
     ) -> dict[str, list[dict[str, Any]]]:
-        """Batch search across multiple queries.
-
-        Args:
-            queries: List of (qid, query_latex) tuples
-            k: Number of results per query
-
-        Returns:
-            Dict mapping qid → list of top-k hits
-        """
+        """Batch search across multiple queries."""
         results = {}
         for qid, query in tqdm(queries, desc=f"Batch searching ({self.representation})"):
             results[qid] = self.search(query, k)
         return results
 
-    # def search_by_representation(
-    #     self, query: str, k: int = 10, query_embedding: Optional[np.ndarray] = None
-    # ) -> dict[str, list[dict[str, Any]]]:
-    #     """Search index and return top-k results grouped by representation.
-
-    #     Pipeline (if query_embedding not provided): LaTeX → embedding → search
-
-    #     Args:
-    #         query: Query LaTeX formula string (or identifier if query_embedding provided)
-    #         k: Number of results
-    #         query_embedding: Optional pre-computed query embedding vector. If None, will be generated from query
-
-    #     Returns:
-    #         Dict mapping representation name to list of hits
-    #     """
-    #     if self._index is None:
-    #         self._load_index_from_disk()
-
-    #     if self._index is None:
-    #         logger.warning(f"Index for {self.representation} not available")
-    #         return {self.representation: []}
-
-    #     # Generate embedding if not provided
-    #     if query_embedding is None:
-    #         try:
-    #             query_embedding = self._generate_query_embedding(query)
-    #         except Exception as e:
-    #             logger.warning(f"Failed to generate query embedding: {e}")
-    #             return {self.representation: []}
-
-    #     qvec = query_embedding.astype(np.float32).reshape(1, -1)
-
-    #     # Search
-    #     distances, indices = self._index.search(qvec, k)
-
-    #     hits = []
-    #     for rank, idx in enumerate(indices[0]):
-    #         if idx in self.id_map:
-    #             answer_id, formula_id = self.id_map[idx]
-    #             hits.append(
-    #                 {
-    #                     "rank": rank + 1,
-    #                     "answer_id": answer_id,
-    #                     "formula_id": formula_id,
-    #                     "distance": float(distances[0][rank]),
-    #                     "representation": self.representation,
-    #                 }
-    #             )
-
-    #     return {self.representation: hits}
-
     def get_representations(self) -> list[str]:
         """Return representation being indexed."""
         return [self.representation]
 
-    # Private methods
+    # -------------------------------------------------------------------------
+    # Private helpers
+    # -------------------------------------------------------------------------
+
+    @property
+    def _tsv_dir(self) -> Optional[Path]:
+        """Return the TSV directory for this representation, or None if not configured."""
+        if not self.formula_tsv_base_dir:
+            return None
+        subdir = "opt_representation_v3" if self.representation == "opt" else "slt_representation_v3"
+        tsv_dir = self.formula_tsv_base_dir / subdir
+        return tsv_dir if tsv_dir.exists() else None
+
+    def _setup_model_and_tokenizer(self) -> tuple[FastTextModelManager, TupleTokenizer, str]:
+        """Load FastText model and build tokenizer for this representation.
+
+        Returns:
+            (model_manager, tuple_tokenizer, tree_type_str)
+        """
+        if not self.embedding_dir or not self.embedding_dir.exists():
+            raise ValueError(f"Embedding directory not found: {self.embedding_dir}")
+
+        tree_type_suffix = self.representation.lower().replace("-", "_")
+        model_file = self.embedding_dir / tree_type_suffix / f"fasttext_model_{tree_type_suffix}.bin"
+        metadata_file = self.embedding_dir / tree_type_suffix / f"training_metadata_{tree_type_suffix}.json"
+
+        if not model_file.exists():
+            raise FileNotFoundError(f"FastText model not found: {model_file}")
+
+        logger.info(f"Loading FastText model for {self.representation}: {model_file}")
+        model_manager = FastTextModelManager(
+            model_path=str(model_file),
+            metadata_path=str(metadata_file),
+            corpus_path="",
+        )
+        model_manager.load()
+
+        metadata = model_manager.get_stats()
+        embedding_type_name = metadata.get("embedding_type", "Both_Separated")
+        tokenize_number = metadata.get("tokenize_number", True)
+
+        embedding_type_map = {
+            "Both_Separated": TupleTokenizationMode.Both_Separated,
+            "Type": TupleTokenizationMode.Type,
+        }
+        embedding_type = embedding_type_map.get(embedding_type_name, TupleTokenizationMode.Both_Separated)
+
+        token_id_manager = TokenIDManager()
+        tuple_tokenizer = TupleTokenizer(
+            token_id_manager=token_id_manager,
+            embedding_type=embedding_type,
+            tokenize_number=tokenize_number,
+        )
+
+        tree_type_mapping = {
+            "slt": "SLT",
+            "opt": "OPT",
+            "slt_type": "SLT-TYPE",
+        }
+        tree_type_str = tree_type_mapping.get(self.representation, "SLT")
+
+        return model_manager, tuple_tokenizer, tree_type_str
+
+    # ---- Checkpoint helpers -------------------------------------------------
+
+    def _tsv_checkpoint_path(self) -> Path:
+        return self.index_path / f"tsv_checkpoint_{self.representation}.json"
+
+    def _load_tsv_checkpoint(self) -> dict:
+        cp = self._tsv_checkpoint_path()
+        if not cp.exists():
+            return {"processed_tsv_files": [], "indexed_count": 0, "trained": False}
+        with open(cp) as f:
+            return json.load(f)
+
+    def _save_tsv_checkpoint(
+        self, processed_files: list[str], indexed_count: int, trained: bool
+    ) -> None:
+        with open(self._tsv_checkpoint_path(), "w") as f:
+            json.dump(
+                {
+                    "processed_tsv_files": processed_files,
+                    "indexed_count": indexed_count,
+                    "trained": trained,
+                },
+                f,
+            )
+
+    # ---- Streaming TSV indexing ----------------------------------------------
+
+    def _collect_tsv_training_vectors(
+        self,
+        tsv_files: list[Path],
+        model_manager: FastTextModelManager,
+        tuple_tokenizer: TupleTokenizer,
+        tree_type: str,
+        train_size: int,
+    ) -> np.ndarray:
+        """Stream TSV files and collect up to train_size embedding vectors for FAISS training.
+
+        Any TSV row with valid MathML is used — no fid_to_meta filtering needed here.
+        """
+        csv.field_size_limit(sys.maxsize)
+        training_vectors: list[np.ndarray] = []
+
+        for tsv_file in tqdm(tsv_files, desc=f"Collecting training vectors ({self.representation})"):
+            if len(training_vectors) >= train_size:
+                break
+            with open(tsv_file, newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    if len(training_vectors) >= train_size:
+                        break
+                    mathml = row.get("formula", "").strip()
+                    if not mathml:
+                        continue
+                    try:
+                        tuples = extract_tuples_from_mathml_direct(mathml, tree_type=tree_type)  # type: ignore
+                        if not tuples:
+                            continue
+                        encoded = encode_tuples(tuples, tuple_tokenizer)
+                        if not encoded:
+                            continue
+                        vec = np.array(model_manager.get_sentence_vector(encoded), dtype=np.float32)
+                        training_vectors.append(vec)
+                    except Exception:
+                        continue
+
+        if len(training_vectors) < train_size:
+            logger.warning(
+                f"Only collected {len(training_vectors)} training vectors "
+                f"(requested {train_size}); corpus may be smaller than expected."
+            )
+
+        return np.array(training_vectors, dtype=np.float32)
+
+    def _build_faiss_index_from_tsv(
+        self,
+        fid_to_meta: dict[str, tuple[str, str]],
+        model_manager: FastTextModelManager,
+        tuple_tokenizer: TupleTokenizer,
+        tree_type: str,
+    ) -> None:
+        """Stream TSV files to build FAISS index with per-file checkpoints.
+
+        Peak memory: one mini-batch of embeddings in the add phase (~1.2 MB),
+        plus training vectors (~3.4 GB, freed after train()).
+        Checkpoints after every TSV file so indexing can resume if interrupted.
+        """
+        csv.field_size_limit(sys.maxsize)
+        tsv_dir = self._tsv_dir
+        if tsv_dir is None:
+            raise ValueError(f"TSV directory not found under {self.formula_tsv_base_dir}")
+
+        all_tsv_files = sorted(tsv_dir.glob("*.tsv"), key=lambda p: int(p.stem))
+
+        cp = self._load_tsv_checkpoint()
+        processed_set: set[str] = set(cp.get("processed_tsv_files", []))
+        indexed_count: int = cp.get("indexed_count", 0)
+        already_trained: bool = cp.get("trained", False)
+
+        index_file = self.index_path / f"formula_index_sq_{self.representation}.faiss"
+
+        # Phase 1: Train (skip if checkpoint says already done)
+        if not already_trained:
+            train_size = min(
+                max(len(fid_to_meta) // 10, self.NLIST * 40),
+                len(fid_to_meta),
+            )
+            logger.info(f"Collecting {train_size:,} training vectors from TSV files...")
+            training_vectors = self._collect_tsv_training_vectors(
+                all_tsv_files, model_manager, tuple_tokenizer, tree_type, train_size
+            )
+
+            logger.info(f"Training FAISS index on {len(training_vectors):,} vectors...")
+            quantizer = faiss.IndexFlat(self.DIMENSION)
+            cpu_index = faiss.IndexIVFScalarQuantizer(
+                quantizer, self.DIMENSION, self.NLIST, self.quantizer_type
+            )
+
+            if self._resolved_device() == "cuda":
+                logger.info("Moving index to GPU for training...")
+                res = getattr(faiss, "StandardGpuResources")()
+                gpu_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)  # type: ignore[attr-defined]
+                gpu_index.train(training_vectors)
+                self._index = faiss.index_gpu_to_cpu(gpu_index)  # type: ignore[attr-defined]
+                logger.info("Training complete; index moved back to CPU")
+            else:
+                cpu_index.train(training_vectors)  # type: ignore
+                self._index = cpu_index
+
+            self._index.nprobe = self.nprobe
+            del training_vectors
+
+            # Save trained (empty) index so resume can reload it
+            faiss.write_index(self._index, str(index_file))
+            self._save_tsv_checkpoint(list(processed_set), indexed_count, trained=True)
+            logger.info("Training complete; empty index saved.")
+        else:
+            # Resume: reload the partially-built index
+            logger.info(f"Resuming from checkpoint ({len(processed_set)} TSV files already done)...")
+            self._index = faiss.read_index(str(index_file))
+            self._index.nprobe = self.nprobe
+
+            id_map_file = self.index_path / f"id_map_sq_{self.representation}.json"
+            if id_map_file.exists():
+                with open(id_map_file) as f:
+                    raw = json.load(f)
+                    self.id_map = {int(k): tuple(v) for k, v in raw.items()}
+
+        # Phase 2: Add vectors TSV file by TSV file
+        remaining = [f for f in all_tsv_files if f.name not in processed_set]
+        logger.info(f"Adding vectors from {len(remaining)} remaining TSV files...")
+
+        failed_count = 0
+
+        for tsv_file in tqdm(remaining, desc=f"Indexing TSVs ({self.representation})"):
+            batch_vectors: list[np.ndarray] = []
+            batch_metas: list[tuple[str, str]] = []
+
+            with open(tsv_file, newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    fid = row.get("id", "")
+                    if fid not in fid_to_meta:
+                        continue
+                    mathml = row.get("formula", "").strip()
+                    if not mathml:
+                        continue
+
+                    try:
+                        tuples = extract_tuples_from_mathml_direct(mathml, tree_type=tree_type)  # type: ignore
+                        if not tuples:
+                            failed_count += 1
+                            continue
+                        encoded = encode_tuples(tuples, tuple_tokenizer)
+                        if not encoded:
+                            failed_count += 1
+                            continue
+                        vec = np.array(model_manager.get_sentence_vector(encoded), dtype=np.float32)
+                        batch_vectors.append(vec)
+                        batch_metas.append(fid_to_meta[fid])
+                    except Exception as e:
+                        logger.debug(f"Skipping formula_id={fid}: {e}")
+                        failed_count += 1
+                        continue
+
+                    if len(batch_vectors) >= _TSV_MINI_BATCH:
+                        base_idx = self._index.ntotal  # type: ignore
+                        self._index.add(np.array(batch_vectors, dtype=np.float32))  # type: ignore
+                        for i, meta in enumerate(batch_metas):
+                            self.id_map[base_idx + i] = meta
+                        indexed_count += len(batch_vectors)
+                        batch_vectors = []
+                        batch_metas = []
+
+            # Flush remainder of this file
+            if batch_vectors:
+                base_idx = self._index.ntotal  # type: ignore
+                self._index.add(np.array(batch_vectors, dtype=np.float32))  # type: ignore
+                for i, meta in enumerate(batch_metas):
+                    self.id_map[base_idx + i] = meta
+                indexed_count += len(batch_vectors)
+
+            # Checkpoint after each TSV file
+            processed_set.add(tsv_file.name)
+            self._save_index_to_disk()
+            self._save_tsv_checkpoint(list(processed_set), indexed_count, trained=True)
+            logger.info(
+                f"Checkpoint: {tsv_file.name} done — {indexed_count:,} vectors indexed total"
+            )
+
+        logger.info(
+            f"Streaming indexing complete: {indexed_count:,} vectors, "
+            f"{failed_count} skipped (no valid tuples)"
+        )
+
+    # ---- Non-TSV (bulk) indexing --------------------------------------------
 
     def _build_faiss_index(
         self,
         embeddings: list[np.ndarray],
         formulas: list[dict[str, Any]],
     ) -> None:
-        """Build FAISS IVFScalarQuantizer index for this representation.
-
-        Args:
-            embeddings: List of embedding vectors
-            formulas: List of formula metadata
-        """
+        """Build FAISS IVFScalarQuantizer index from a pre-loaded embeddings list."""
         logger.info(f"Building index for {self.representation} ({len(embeddings)} vectors)")
 
         embeddings_array = np.array(embeddings, dtype=np.float32)
 
-        # Sample for training (~10% or 2.8M, whichever is smaller)
-        # But ensure minimum NLIST * 40 samples for FAISS clustering requirement
-        train_size = max(min(len(embeddings) // 10, 2_800_000), self.NLIST * 40)
+        # Sample for training (~10% or 2.8M, whichever is smaller).
+        # Cap at len(embeddings) so np.random.choice never requests more samples than available.
+        train_size = min(
+            max(len(embeddings) // 10, self.NLIST * 40),
+            len(embeddings),
+        )
         training_indices = np.random.choice(len(embeddings), train_size, replace=False)
         training_vectors = embeddings_array[training_indices]
 
         logger.info(f"Training on {train_size} vectors...")
 
-        # Create IVFScalarQuantizer index
-        # First create a flat index as the quantizer
         quantizer = faiss.IndexFlat(self.DIMENSION)
-        # Then create the IVF index with scalar quantization
-        # Constructor: (quantizer_index, dimension, nlist, quantizer_type)
         cpu_index = faiss.IndexIVFScalarQuantizer(
             quantizer, self.DIMENSION, self.NLIST, self.quantizer_type
         )
@@ -396,7 +626,6 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         logger.info(f"Adding {len(embeddings)} vectors...")
         self._index.add(embeddings_array)  # type: ignore
 
-        # Build ID map
         for idx, formula_data in enumerate(formulas):
             self.id_map[idx] = (
                 formula_data["answer_id"],
@@ -408,92 +637,13 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
             f"index size: {self._estimate_index_size(self._index) / 1e9:.2f} GB"
         )
 
-    def _load_embeddings(
-        self, formulas: list[dict]
-    ) -> list[np.ndarray]:
-        """Generate embeddings for formulas using trained FastText model.
-        
-        Pipeline:
-        1. Load trained FastText model for this representation
-        2. Create TupleTokenizer with metadata from training
-        3. For each formula (LaTeX):
-           - Extract tuples: LaTeX → tuples
-           - Encode tuples: tuples → Unicode tokens
-           - Generate embedding: tokens → vector via FastText
-        4. Return all embeddings
-        
-        Args:
-            formulas: List of formula metadata with 'latex' field
-            
-        Returns:
-            List of embedding vectors (np.ndarray of float32)
+    def _load_embeddings(self, formulas: list[dict]) -> list[np.ndarray]:
+        """Generate embeddings for formulas via latexmlmath subprocess (slow path).
+
+        Only used when formula_tsv_base_dir is not set.
         """
-        # Validate embedding_dir
-        if not self.embedding_dir:
-            raise ValueError("embedding_dir not configured")
+        model_manager, tuple_tokenizer, tree_type = self._setup_model_and_tokenizer()
 
-        embedding_dir = Path(self.embedding_dir)
-
-        # Setup model paths (organized in subdirectories: slt/, opt/, slt_type/)
-        tree_type_suffix = self.representation.lower().replace("-", "_")
-        model_file = embedding_dir / tree_type_suffix / f"fasttext_model_{tree_type_suffix}.bin"
-        metadata_file = embedding_dir / tree_type_suffix / f"training_metadata_{tree_type_suffix}.json"
-
-        # Verify model file exists
-        if not model_file.exists():
-            raise FileNotFoundError(f"FastText model not found: {model_file}")
-
-        logger.info(f"Loading FastText model for {self.representation}: {model_file}")
-
-        # Load model and metadata
-        model_manager = FastTextModelManager(
-            model_path=str(model_file),
-            metadata_path=str(metadata_file),
-            corpus_path="",  # Not needed for inference
-        )
-        model_manager.load()
-
-        # Get tokenization configuration from metadata
-        metadata = model_manager.get_stats()
-        embedding_type_name = metadata.get("embedding_type", "Both_Separated")
-        tokenize_number = metadata.get("tokenize_number", True)
-
-        # Map embedding type name to enum
-        embedding_type_map = {
-            "Both_Separated": TupleTokenizationMode.Both_Separated,
-            "Type": TupleTokenizationMode.Type,
-        }
-        embedding_type = embedding_type_map.get(
-            embedding_type_name, TupleTokenizationMode.Both_Separated
-        )
-
-        # Create fresh TokenIDManager for tokenization
-        token_id_manager = TokenIDManager()
-        tuple_tokenizer = TupleTokenizer(
-            token_id_manager=token_id_manager,
-            embedding_type=embedding_type,
-            tokenize_number=tokenize_number,
-        )
-
-        # Determine tree type for tuple extraction
-        tree_type_mapping = {
-            "slt": "SLT",
-            "opt": "OPT",
-            "slt_type": "SLT-TYPE",
-        }
-        tree_type_str = tree_type_mapping.get(self.representation, "SLT")
-        tree_type = tree_type_str  # type: ignore
-
-        # Fast path: use pre-computed MathML from TSV files (no subprocess)
-        if self._tsv_dir is not None:
-            logger.info(f"Using pre-computed MathML from {self._tsv_dir} (bypassing latexmlmath)")
-            return self._load_embeddings_from_tsv(formulas, model_manager, tuple_tokenizer, tree_type)
-
-        # Slow path: convert LaTeX → MathML via latexmlmath subprocess
-        logger.warning(
-            "formula_tsv_base_dir not set — falling back to latexmlmath subprocess. "
-            "Set formula_tsv_base_dir='data/raw/collection/formula' to use pre-computed MathML."
-        )
         embeddings: list[np.ndarray] = []
         failed_count = 0
 
@@ -549,102 +699,18 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         logger.info(f"Generated {len(embeddings)} embeddings")
         return embeddings
 
-    @property
-    def _tsv_dir(self) -> Optional[Path]:
-        """Return the TSV directory for this representation, or None if not configured."""
-        if not self.formula_tsv_base_dir:
-            return None
-        subdir = "opt_representation_v3" if self.representation == "opt" else "slt_representation_v3"
-        tsv_dir = self.formula_tsv_base_dir / subdir
-        return tsv_dir if tsv_dir.exists() else None
-
-    def _load_embeddings_from_tsv(
-        self,
-        formulas: list[dict],
-        model_manager: FastTextModelManager,
-        tuple_tokenizer: "TupleTokenizer",
-        tree_type: str,
-    ) -> list[np.ndarray]:
-        """Generate embeddings by reading pre-computed MathML from TSV files.
-
-        Streams through TSV files in numeric order and looks up each formula by id,
-        calling extract_tuples_from_mathml_direct instead of latexmlmath.
-        Only one TSV file (~56 MB) is held in memory at a time.
-
-        Args:
-            formulas: Formula metadata list with 'formula_id' and 'latex' fields
-            model_manager: Loaded FastText model manager
-            tuple_tokenizer: Configured TupleTokenizer
-            tree_type: "SLT", "OPT", or "SLT-TYPE"
-
-        Returns:
-            List of 300-dim float32 embedding vectors (zero vector on failure)
-        """
-        csv.field_size_limit(sys.maxsize)
-        tsv_dir = self._tsv_dir
-        if tsv_dir is None:
-            raise ValueError(f"TSV directory not found under {self.formula_tsv_base_dir}")
-
-        # Build formula_id → position index for O(1) lookup
-        fid_to_idx: dict[str, int] = {str(f["formula_id"]): i for i, f in enumerate(formulas)}
-
-        embeddings: list[np.ndarray] = [np.zeros(self.DIMENSION, dtype=np.float32)] * len(formulas)
-        failed_count = 0
-        found_count = 0
-
-        tsv_files = sorted(tsv_dir.glob("*.tsv"), key=lambda p: int(p.stem))
-        logger.info(f"Streaming {len(tsv_files)} TSV files from {tsv_dir}")
-
-        for tsv_file in tqdm(tsv_files, desc=f"TSV→embed ({self.representation})"):
-            with open(tsv_file, newline="") as f:
-                reader = csv.DictReader(f, delimiter="\t")
-                for row in reader:
-                    fid = row["id"]
-                    if fid not in fid_to_idx:
-                        continue
-
-                    idx = fid_to_idx[fid]
-                    mathml = row["formula"].strip()
-
-                    try:
-                        tuples = extract_tuples_from_mathml_direct(mathml, tree_type=tree_type)  # type: ignore
-                        if not tuples:
-                            failed_count += 1
-                            continue
-
-                        encoded_sequence = encode_tuples(tuples, tuple_tokenizer)
-                        if not encoded_sequence:
-                            failed_count += 1
-                            continue
-
-                        embedding_list = model_manager.get_sentence_vector(encoded_sequence)
-                        embeddings[idx] = np.array(embedding_list, dtype=np.float32)
-                        found_count += 1
-
-                    except Exception as e:
-                        logger.warning(f"Failed embedding for formula_id={fid}: {e}")
-                        failed_count += 1
-
-        logger.info(
-            f"TSV embedding complete: {found_count} embedded, {failed_count} failed, "
-            f"{len(formulas) - found_count - failed_count} not found in TSV"
-        )
-        return embeddings
-
     def _save_index_to_disk(self) -> None:
-        """Save index and metadata to disk."""
+        """Save FAISS index and id_map to disk."""
         logger.info("Saving index to disk...")
 
         if self._index is None:
             logger.warning(f"No index to save for {self.representation}")
             return
 
-        # Save FAISS index (use _sq suffix to distinguish from IVFFlat)
         index_file = self.index_path / f"formula_index_sq_{self.representation}.faiss"
         faiss.write_index(self._index, str(index_file))
         logger.info(f"Saved {self.representation} index to {index_file}")
 
-        # Save ID map
         id_map_file = self.index_path / f"id_map_sq_{self.representation}.json"
         with open(id_map_file, "w") as f:
             json.dump(
@@ -654,7 +720,7 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         logger.info(f"Saved ID map for {self.representation} to {id_map_file}")
 
     def _load_index_from_disk(self) -> None:
-        """Load index from disk."""
+        """Load FAISS index and id_map from disk."""
         logger.info("Loading index from disk...")
 
         index_file = self.index_path / f"formula_index_sq_{self.representation}.faiss"
@@ -664,11 +730,9 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
             logger.warning(f"Index file not found for {self.representation}: {index_file}")
             return
 
-        # Load FAISS index
         self._index = faiss.read_index(str(index_file))
         self._index.nprobe = self.nprobe
 
-        # Load ID map
         with open(id_map_file) as f:
             id_map_raw = json.load(f)
             self.id_map = {int(k): tuple(v) for k, v in id_map_raw.items()}
@@ -679,65 +743,18 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         )
 
     def _generate_query_embedding(self, query_latex: str) -> np.ndarray:
-        """Generate embedding for a query LaTeX formula.
-
-        Pipeline: LaTeX → tuples → encoded tokens → FastText embedding
-
-        Args:
-            query_latex: LaTeX formula string
-
-        Returns:
-            300-dim float32 embedding vector (zero vector on failure)
-        """
-        # Load model and tokenizer if not already cached
+        """Generate embedding for a query LaTeX formula."""
         if not hasattr(self, "_query_model_manager"):
-            embedding_dir = Path(self.embedding_dir) if self.embedding_dir else None
-            if not embedding_dir or not embedding_dir.exists():
-                raise ValueError(f"Embedding directory not found: {embedding_dir}")
+            mm, tok, _ = self._setup_model_and_tokenizer()
+            self._query_model_manager = mm
+            self._query_tokenizer = tok
 
-            tree_type_suffix = self.representation.lower().replace("-", "_")
-            model_file = embedding_dir / tree_type_suffix / f"fasttext_model_{tree_type_suffix}.bin"
-            metadata_file = embedding_dir / tree_type_suffix / f"training_metadata_{tree_type_suffix}.json"
-
-            if not model_file.exists():
-                raise FileNotFoundError(f"FastText model not found: {model_file}")
-
-            # Load model and metadata
-            self._query_model_manager = FastTextModelManager(
-                model_path=str(model_file),
-                metadata_path=str(metadata_file),
-                corpus_path="",
-            )
-            self._query_model_manager.load()
-
-            # Setup tokenizer
-            metadata = self._query_model_manager.get_stats()
-            embedding_type_name = metadata.get("embedding_type", "Both_Separated")
-            tokenize_number = metadata.get("tokenize_number", True)
-
-            embedding_type_map = {
-                "Both_Separated": TupleTokenizationMode.Both_Separated,
-                "Type": TupleTokenizationMode.Type,
-            }
-            embedding_type = embedding_type_map.get(
-                embedding_type_name, TupleTokenizationMode.Both_Separated
-            )
-
-            token_id_manager = TokenIDManager()
-            self._query_tokenizer = TupleTokenizer(
-                token_id_manager=token_id_manager,
-                embedding_type=embedding_type,
-                tokenize_number=tokenize_number,
-            )
-
-        # Map representation to tree type
         tree_type_mapping = {
             "slt": "SLT",
             "opt": "OPT",
             "slt_type": "SLT-TYPE",
         }
-        tree_type_str = tree_type_mapping.get(self.representation, "SLT")
-        tree_type = tree_type_str  # type: ignore
+        tree_type = tree_type_mapping.get(self.representation, "SLT")
 
         try:
             mathml = LatexToMathML.convert_to_mathml2(query_latex)
@@ -767,5 +784,4 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
 
     def _estimate_index_size(self, index: faiss.Index) -> int:
         """Estimate index size in bytes."""
-        # Vectors compressed to bytes_per_vector bytes + overhead
         return index.ntotal * self.bytes_per_vector + 50_000_000
