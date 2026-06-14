@@ -205,7 +205,7 @@ class PyseriniDenseIndexer(BaseIndexer):
             docid_file = open(docid_path, docid_mode)
 
             with tqdm(
-                total=limit,
+                total=limit if limit is not None else 1_445_495,
                 initial=skip if limit else 0,
                 desc=f"Encoding ({device})",
                 unit="doc",

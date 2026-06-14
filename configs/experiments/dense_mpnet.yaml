@@ -5,6 +5,6 @@ index_type: "dense"
 num_hits: 1000
 
 # Optional parameters
-index_corpus_limit: 1000  # null = use all documents; set to e.g. 1000 for debugging
+index_corpus_limit: null  # null = use all documents; set to e.g. 1000 for debugging
 force_rebuild: true
 experiment_name: "Dense Index Runs"
