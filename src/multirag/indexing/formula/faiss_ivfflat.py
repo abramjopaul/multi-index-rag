@@ -56,6 +56,7 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
         representation: str = "slt",
         nprobe: int = 64,
         force_rebuild: bool = False,
+        device: str = "auto",
     ):
         """
         Initialize IVFFlat formula indexer for a single representation.
@@ -76,6 +77,7 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
         self.embedding_dir = Path(embedding_dir) if embedding_dir else None
         self.nprobe = nprobe
         self.force_rebuild = force_rebuild
+        self.device = device
 
         # Validate and set representation
         if representation not in self.REPRESENTATIONS:
@@ -91,8 +93,22 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
 
         logger.info(
             f"Initialized IVFFlat indexer: {self.index_path} "
-            f"(representation={self.representation}, nlist={self.NLIST}, nprobe={self.nprobe})"
+            f"(representation={self.representation}, nlist={self.NLIST}, nprobe={self.nprobe}, "
+            f"device={self._resolved_device()})"
         )
+
+    def _resolved_device(self) -> str:
+        """Return the device to use for FAISS GPU operations.
+
+        Detects faiss-gpu by probing StandardGpuResources (only present in faiss-gpu,
+        not faiss-cpu). Falls back to 'cpu' when faiss-gpu is not installed or when
+        device is explicitly set to 'cpu'. Note: FAISS GPU is CUDA-only (no MPS).
+        """
+        if self.device != "auto":
+            return self.device
+        if getattr(faiss, "StandardGpuResources", None) is not None:
+            return "cuda"
+        return "cpu"
 
     def prepare_document(self, raw_doc: dict[str, Any]) -> dict[str, Any]:
         """Convert raw answer document to indexer format.
@@ -275,15 +291,25 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
 
         # Create IVFFlat index
         quantizer = faiss.IndexFlatL2(self.DIMENSION)
-        self._faiss_index = faiss.IndexIVFFlat(quantizer, self.DIMENSION, self.NLIST)
+        cpu_index = faiss.IndexIVFFlat(quantizer, self.DIMENSION, self.NLIST)
+
+        # Train on GPU if available
+        if self._resolved_device() == "cuda":
+            logger.info("Moving index to GPU for training...")
+            res = getattr(faiss, "StandardGpuResources")()
+            gpu_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)  # type: ignore[attr-defined]
+            gpu_index.train(training_vectors)
+            self._faiss_index = faiss.index_gpu_to_cpu(gpu_index)  # type: ignore[attr-defined]
+            logger.info("Training complete; index moved back to CPU")
+        else:
+            cpu_index.train(training_vectors)  # type: ignore
+            self._faiss_index = cpu_index
+
         self._faiss_index.nprobe = self.nprobe
 
-        # Train
-        self._faiss_index.train(training_vectors) # type: ignore
-
-        # Add all vectors
+        # Add all vectors on CPU (28M × 300 × 4 bytes ≈ 33 GB — won't fit in VRAM)
         logger.info(f"Adding {len(embeddings)} vectors...")
-        self._faiss_index.add(embeddings_array) # type: ignore
+        self._faiss_index.add(embeddings_array)  # type: ignore
 
         # Build ID map
         for idx, formula_data in enumerate(formulas):
