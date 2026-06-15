@@ -23,6 +23,7 @@ from multirag.formula_search import (
     TupleTokenizer,
     extract_tuples_from_mathml_direct,
 )
+from multirag.formula_search.encoder_maps import load_maps
 from multirag.formula_search.latex_mml import LatexToMathML, LatexToMathMLPool, _get_optimal_workers
 from multirag.formula_search.tuple_extraction import (
     encode_tuples,
@@ -350,7 +351,16 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         }
         embedding_type = embedding_type_map.get(embedding_type_name, TupleTokenizationMode.Both_Separated)
 
-        token_id_manager = TokenIDManager()
+        encoder_maps_path = metadata.get("encoder_maps_path")
+        if encoder_maps_path and Path(encoder_maps_path).exists():
+            node_map, edge_map = load_maps(encoder_maps_path)
+            node_id = max(node_map.values(), default=60000) + 1
+            edge_id = max(edge_map.values(), default=500) + 1
+            token_id_manager = TokenIDManager(node_id=node_id, edge_id=edge_id, node_map=node_map, edge_map=edge_map)
+        else:
+            logger.warning("Encoder maps not found; token IDs will not match training vocabulary")
+            token_id_manager = TokenIDManager()
+
         tuple_tokenizer = TupleTokenizer(
             token_id_manager=token_id_manager,
             embedding_type=embedding_type,
@@ -730,6 +740,10 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
 
         if not index_file.exists():
             logger.warning(f"Index file not found for {self.representation}: {index_file}")
+            return
+
+        if not id_map_file.exists():
+            logger.warning(f"ID map file not found for {self.representation}: {id_map_file}")
             return
 
         self._index = faiss.read_index(str(index_file))
