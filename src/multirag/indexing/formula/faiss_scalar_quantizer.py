@@ -65,7 +65,7 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         embedding_dir: Optional[str] = None,
         representation: str = "slt",
         quantizer_bits: str = "fp16",
-        nprobe: int = 64,
+        nprobe: int = 256,
         force_rebuild: bool = False,
         formula_tsv_base_dir: Optional[str] = None,
         device: str = "auto",
