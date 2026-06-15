@@ -16,6 +16,7 @@ from tqdm import tqdm
 from multirag.config.path_configs import ANSWERS_JSONL
 from multirag.embedding.formula_model_manager import FastTextModelManager
 from multirag.formula_search import TokenIDManager, TupleTokenizationMode, TupleTokenizer
+from multirag.formula_search.encoder_maps import load_maps
 from multirag.formula_search.tuple_extraction import (
     encode_tuples,
     extract_tuples_from_latex_subprocess,
@@ -382,15 +383,22 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
             embedding_type_name, TupleTokenizationMode.Both_Separated
         )
         
-        # Create fresh TokenIDManager for tokenization
-        # (encoder_maps are for reference; we generate tokens fresh during inference)
-        token_id_manager = TokenIDManager()
+        encoder_maps_path = metadata.get("encoder_maps_path")
+        if encoder_maps_path and Path(encoder_maps_path).exists():
+            node_map, edge_map = load_maps(encoder_maps_path)
+            node_id = max(node_map.values(), default=60000) + 1
+            edge_id = max(edge_map.values(), default=500) + 1
+            token_id_manager = TokenIDManager(node_id=node_id, edge_id=edge_id, node_map=node_map, edge_map=edge_map)
+        else:
+            logger.warning("Encoder maps not found; token IDs will not match training vocabulary")
+            token_id_manager = TokenIDManager()
+
         tuple_tokenizer = TupleTokenizer(
             token_id_manager=token_id_manager,
             embedding_type=embedding_type,
             tokenize_number=tokenize_number,
         )
-        
+
         # Determine tree type for tuple extraction (cast string to Literal)
         tree_type_mapping = {
             "slt": "SLT",
@@ -483,6 +491,10 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
             logger.warning(f"Index file not found for {self.representation}: {index_file}")
             return
 
+        if not id_map_file.exists():
+            logger.warning(f"ID map file not found for {self.representation}: {id_map_file}")
+            return
+
         # Load FAISS index
         self._faiss_index = faiss.read_index(str(index_file))
         self._faiss_index.nprobe = self.nprobe
@@ -542,7 +554,16 @@ class FormulaFAISSIndexerIVFFlat(BaseIndexer):
                 embedding_type_name, TupleTokenizationMode.Both_Separated
             )
 
-            token_id_manager = TokenIDManager()
+            encoder_maps_path = metadata.get("encoder_maps_path")
+            if encoder_maps_path and Path(encoder_maps_path).exists():
+                node_map, edge_map = load_maps(encoder_maps_path)
+                node_id = max(node_map.values(), default=60000) + 1
+                edge_id = max(edge_map.values(), default=500) + 1
+                token_id_manager = TokenIDManager(node_id=node_id, edge_id=edge_id, node_map=node_map, edge_map=edge_map)
+            else:
+                logger.warning("Encoder maps not found; token IDs will not match training vocabulary")
+                token_id_manager = TokenIDManager()
+
             self._query_tokenizer = TupleTokenizer(
                 token_id_manager=token_id_manager,
                 embedding_type=embedding_type,
