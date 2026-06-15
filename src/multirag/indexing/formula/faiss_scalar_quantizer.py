@@ -23,7 +23,7 @@ from multirag.formula_search import (
     TupleTokenizer,
     extract_tuples_from_mathml_direct,
 )
-from multirag.formula_search.latex_mml import LatexToMathML, _get_optimal_workers
+from multirag.formula_search.latex_mml import LatexToMathML, LatexToMathMLPool, _get_optimal_workers
 from multirag.formula_search.tuple_extraction import (
     encode_tuples,
 )
@@ -55,7 +55,7 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
     REPRESENTATIONS = ["slt", "opt", "slt_type"]
     DIMENSION = 300
     NLIST = 16384  # Number of clusters (4·√N and 16·√N. With √28M ≈ 5,300) ie 16384, 32768, or 65536.
-    NPROBE = 32  # Number of clusters to search. Sweep upward (32 → 64 → 128 → 256
+    NPROBE = 256  # Number of clusters to search. Sweep upward (32 → 64 → 128 → 256
     QUANTIZER_TYPE = faiss.ScalarQuantizer.QT_fp16  # 8-bit or 16-bit quantization
 
     def __init__(
@@ -646,49 +646,51 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
 
         embeddings: list[np.ndarray] = []
         failed_count = 0
+        mathml_type = "cmml" if self.representation == "opt" else "pmml"
 
         logger.info(f"Generating embeddings for {len(formulas)} formulas...")
 
         batch_size = 256
-        for batch_start in tqdm(range(0, len(formulas), batch_size), desc=f"Embedding {self.representation}"):
-            batch_formulas = formulas[batch_start : batch_start + batch_size]
-            batch_tex = [formula_data.get("latex", "") for formula_data in batch_formulas]
+        with LatexToMathMLPool(num_workers=_get_optimal_workers(), mathml_type=mathml_type) as pool:
+            for batch_start in tqdm(range(0, len(formulas), batch_size), desc=f"Embedding {self.representation}"):
+                batch_formulas = formulas[batch_start : batch_start + batch_size]
+                batch_tex = [formula_data.get("latex", "") for formula_data in batch_formulas]
 
-            mathml_results = LatexToMathML.convert_batch2(batch_tex, num_workers=_get_optimal_workers())
+                mathml_results = pool.convert_batch(batch_tex)
 
-            for formula_data, mathml in zip(batch_formulas, mathml_results):
-                try:
-                    if not formula_data.get("latex", ""):
-                        embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
-                        continue
+                for formula_data, mathml in zip(batch_formulas, mathml_results):
+                    try:
+                        if not formula_data.get("latex", ""):
+                            embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
+                            continue
 
-                    if not mathml:
+                        if not mathml:
+                            embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
+                            failed_count += 1
+                            continue
+
+                        tuples = extract_tuples_from_mathml_direct(mathml, tree_type=tree_type)  # type: ignore
+
+                        if not tuples:
+                            embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
+                            failed_count += 1
+                            continue
+
+                        encoded_sequence = encode_tuples(tuples, tuple_tokenizer)
+
+                        if not encoded_sequence:
+                            embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
+                            failed_count += 1
+                            continue
+
+                        embedding_list = model_manager.get_sentence_vector(encoded_sequence)
+                        embedding = np.array(embedding_list, dtype=np.float32)
+                        embeddings.append(embedding)
+
+                    except Exception as e:
+                        logger.warning(f"Failed to generate embedding for formula: {e}")
                         embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
                         failed_count += 1
-                        continue
-
-                    tuples = extract_tuples_from_mathml_direct(mathml, tree_type=tree_type)  # type: ignore
-
-                    if not tuples:
-                        embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
-                        failed_count += 1
-                        continue
-
-                    encoded_sequence = encode_tuples(tuples, tuple_tokenizer)
-
-                    if not encoded_sequence:
-                        embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
-                        failed_count += 1
-                        continue
-
-                    embedding_list = model_manager.get_sentence_vector(encoded_sequence)
-                    embedding = np.array(embedding_list, dtype=np.float32)
-                    embeddings.append(embedding)
-
-                except Exception as e:
-                    logger.warning(f"Failed to generate embedding for formula: {e}")
-                    embeddings.append(np.zeros(self.DIMENSION, dtype=np.float32))
-                    failed_count += 1
 
         if failed_count > 0:
             logger.warning(
@@ -757,7 +759,10 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         tree_type = tree_type_mapping.get(self.representation, "SLT")
 
         try:
-            mathml = LatexToMathML.convert_to_mathml2(query_latex)
+            if self.representation == "opt":
+                mathml = LatexToMathML.convert_to_mathml2(query_latex)  # CMML for OPT
+            else:
+                mathml = LatexToMathML.convert_to_mathml(query_latex)   # PMML for SLT/SLT-TYPE
 
             if not mathml:
                 logger.debug(f"No MathML produced for query: {query_latex}")
