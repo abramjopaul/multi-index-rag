@@ -27,6 +27,7 @@ numpy = ">=1.26.0"
 matplotlib = ">=3.10.0"
 torch = ">=2.0.0"
 gcsfs = "^2026.5.0"
+gsutil = "^5.37"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
