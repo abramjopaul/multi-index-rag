@@ -174,7 +174,7 @@ class FormulaTrainerDirect:
       ─────────────────────────────────
         Raw tuple: "N!2\tV!q\tn\t-"
         Split by tab: ["N!2", "V!q", "n", "-"]
-        Tokenize nodes: ["N!", "2"] + ["V!q"] + edge "n"
+        Tokenize nodes (Both_Separated mode): ["N!", "2"] + ["V!", "q"] + edge "n" + edge "-"
         
       Stage B: Map Tokens → Numeric IDs (via encoder_maps)
       ───────────────────────────────────────────────────
@@ -183,51 +183,89 @@ class FormulaTrainerDirect:
         Node tokens (ID space 60000+):
           "N!"   → 60000  (number type)
           "2"    → 60001  (specific number value)
-          "V!q"  → 60003  (variable q)
-          etc.
+          "V!"   → 60002  (variable type)
+          "q"    → 60003  (specific variable q)
         
         Edge tokens (ID space 500+):
           "n"    → 500    (north relation)
-          "w"    → 501    (west relation)
-          "-"    → 500    (end-of-branch)
-          etc.
+          "-"    → 501    (end-of-branch)
         
-        Result: Numeric Tuple = [60000, 60001, 500]
+        Result: Numeric sequence = [60000, 60001, 60002, 60003, 500, 501]
         
       Stage C: Convert Numeric IDs → Unicode Characters
       ──────────────────────────────────────────────────
-        Each numeric ID converted to Unicode via chr(id):
-          [60000, 60001, 500] → chr(60000) + chr(60001) + chr(500)
-                              → Ǵ + Ǵǵ + ǵ  (rare Unicode chars)
+        STEP C.1: Individual ID to character conversion
+          60000 → chr(60000)  (U+EA60)
+          60001 → chr(60001)  (U+EA61)
+          60002 → chr(60002)  (U+EA62)
+          60003 → chr(60003)  (U+EA63)
+          500   → chr(500)    (U+01F4)
+          501   → chr(501)    (U+01F5)
+        
+        STEP C.2: Concatenate all characters into single string
+          [chr(60000), chr(60001), chr(60002), chr(60003), chr(500), chr(501)]
+          → chr(60000) + chr(60001) + chr(60002) + chr(60003) + chr(500) + chr(501)
+          → "ꙠꙡꙢꙣǴǵ"  (single encoded tuple string, no spaces)
+        
+        ✅ Result: ONE TUPLE → ONE ENCODED STRING "ꙠꙡꙢꙣǴǵ"
       
       EXAMPLES (from formula 2q^2):
       ──────────────────────────────
-        Tuple 1: (N!2, V!q, n, -)
-          Numeric: [60000, 60001, 60003, 60002, 500]
-          Unicode: Ǵ Ǵǵ ǵ Ǵ Ǵ  (visually distinct tokens)
+        Tuple 1: "N!2\tV!q\tn\t-"
+          Tokens: ["N!", "2", "V!", "q", "n", "-"]
+          Numeric: [60000, 60001, 60002, 60003, 500, 501]
+          Unicode: "ꙠꙡꙢꙣǴǵ"  (1 encoded tuple)
         
-        Tuple 2: (N!2, N!2, na, -)
-          Numeric: [60000, 60001, 60000, 60001, 500, 501]
-          Unicode: Ǵ Ǵǵ ǵ Ǵ Ǵ ǵ
+        Tuple 2: "V!q\tN!2\ta\tn"
+          Tokens: ["V!", "q", "N!", "2", "a", "n"]
+          Numeric: [60002, 60003, 60000, 60001, 502, 500]
+          Unicode: "ꙢꙣꙠꙡǶǴ"  (1 encoded tuple)
+        
+        Tuple 3: "N!2\t0!\tn\tna"
+          Tokens: ["N!", "2", "0!", "n", "n", "a"]
+          Numeric: [60000, 60001, 60004, 500, 500, 502]
+          Unicode: "ꙠꙡꙤǴǴǶ"  (1 encoded tuple)
       
       Encoder maps saved to: encoder_maps_{tree_type}.tsv
         Maps node/edge IDs to components (N!2, V!q, n, -, etc.)
     
-    STEP 5: Final Encoding (Whitespace-Separated Tokens)
-    ---------------------------------------------------
-      ✅ FINAL ENCODED SEQUENCE:
-         Ǵ Ǵǵ ǵ Ǵ Ǵ
+    STEP 5: Join Multiple Tuples with Whitespace
+    ─────────────────────────────────────────────
+      STEP 5.1: Collect all encoded tuples from formula
+        encoded_tokens = ["ꙠꙡꙢꙣǴǵ", "ꙢꙣꙠꙡǶǴ", "ꙠꙡꙤǴǴǶ", ...]
       
-      This sequence is:
-      • Saved to corpus file (one line per formula)
-      • Used as training sentences for FastText
-      • Each token (Ǵ, Ǵǵ, ǵ) is treated as a "word" in embedding space
-      • FastText learns structural patterns: spatial relationships, node types, etc.
+      STEP 5.2: Join with whitespace separator
+        encoded_sequence = " ".join(encoded_tokens)
+        → "ꙠꙡꙢꙣǴǵ ꙢꙣꙠꙡǶǴ ꙠꙡꙤǴǴǶ ..."
+        
+        ✅ Result: ONE FORMULA → ONE LINE with SPACE-SEPARATED ENCODED TUPLES
+    
+    STEP 6: Final Corpus Format
+    ────────────────────────────
+      ✅ CORPUS FILE (one line per formula):
+      
+        Formula 1 (2q^2):     ꙠꙡꙢꙣǴǵ ꙢꙣꙠꙡǶǴ ꙠꙡꙤǴǴǶ
+        Formula 2 (x + y):    ꙥꙦꙧꙨǴǷ ꙩꙪꙫꙬǶǸ ...
+        Formula 3 (a^2+b^2):  ꙭꙮ꙯꙰Ǵǹ ꙱꙲꙳ꙴǺǻ ...
+      
+      Each line is treated by FastText as a "sentence" where:
+      • Whitespace is the token boundary
+      • Each space-separated unicode string is a "word" in FastText vocabulary
+      • FastText learns embeddings for word pairs based on context window
+      • Example: "ꙠꙡꙢꙣǴǵ" and "ꙢꙣꙠꙡǶǴ" co-occur within window → similar embeddings
     
     KEY INSIGHT:
-    The tuple encoding preserves the mathematical structure in a computable form:
-    • Node labels capture semantic content (numbers vs. variables)
-    • Relations capture spatial layout (above, beside, exponent, etc.)
+    The encoding hierarchy:
+    1. Individual node/edge elements → Numeric IDs (TokenIDManager)
+    2. Numeric IDs → Unicode characters (chr())
+    3. Concatenated characters → One encoded tuple string (no spaces)
+    4. Multiple encoded tuples → One line in corpus (space-separated)
+    5. FastText trains on corpus lines as "sentences" with tuples as "words"
+    
+    The tuple encoding preserves the mathematical structure:
+    • Node labels (N!, V!, M!) capture semantic content (numbers vs. variables vs. operators)
+    • Node values (2, q, +) capture specific symbols
+    • Edge labels (n, s, e, w, a) capture spatial layout (above, beside, exponent, etc.)
     • Rare Unicode characters enable efficient FastText tokenization
     """
 
