@@ -37,8 +37,10 @@ Usage:
 
 from .faiss_ivfflat import FormulaFAISSIndexerIVFFlat
 from .faiss_scalar_quantizer import FormulaFAISSIndexerIVFScalarQuantizer
+from .faiss_fused import FormulaFAISSIndexerFused
 
 __all__ = [
     "FormulaFAISSIndexerIVFFlat",
-    "FormulaFAISSIndexerIVFScalarQuantizer"
+    "FormulaFAISSIndexerIVFScalarQuantizer",
+    "FormulaFAISSIndexerFused",
 ]
