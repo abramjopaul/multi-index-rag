@@ -13,6 +13,7 @@ class IndexType(str, Enum):
     SPARSE = "sparse"
     DENSE = "dense"
     FORMULA = "formula"
+    FORMULA_FUSED = "formula_fused"
     # Combinations will be added later
     # SPARSE_DENSE = "sparse_dense"
     # SPARSE_FORMULA = "sparse_formula"

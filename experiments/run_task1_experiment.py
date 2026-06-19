@@ -142,10 +142,34 @@ def create_indexer(
         indexer.index(force=force_rebuild, limit=index_corpus_limit)
         return indexer
 
+    elif index_type == "formula_fused":
+        from multirag.indexing.formula import FormulaFAISSIndexerFused
+
+        config = kwargs.get("config")
+        if config is None:
+            raise ValueError("create_indexer() requires 'config' kwarg for formula_fused index_type")
+
+        index_path = config.formula_index_path or str(FORMULA_FAISS_INDEX_DIR / "fused_sq")
+        embedding_dir = config.formula_embedding_dir or str(FORMULA_INDEX_DIR)
+        tsv_base_dir = config.formula_tsv_base_dir or str(FORMULA_DIR)
+
+        logger.info(
+            f"Creating FormulaFAISSIndexerFused: index_path={index_path}"
+        )
+        indexer = FormulaFAISSIndexerFused(
+            index_path=index_path,
+            corpus_path=ANSWERS_JSONL,  # type: ignore
+            embedding_dir=embedding_dir,
+            formula_tsv_base_dir=tsv_base_dir,
+            force_rebuild=force_rebuild,
+        )
+        indexer.index(force=force_rebuild, limit=index_corpus_limit)
+        return indexer
+
     else:
         raise ValueError(
             f"Unknown index_type: {index_type}. "
-            f"Must be one of: 'sparse', 'dense', 'formula'"
+            f"Must be one of: 'sparse', 'dense', 'formula', 'formula_fused'"
         )
 
 
