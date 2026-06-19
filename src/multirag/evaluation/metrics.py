@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -95,6 +96,94 @@ def _avg_over_queries(results: dict[str, dict[str, float]]) -> dict[str, float]:
     return {key: totals[key] / counts[key] for key in totals}
 
 
+# ---------------------------------------------------------------------------
+# Formula selection helpers
+# ---------------------------------------------------------------------------
+
+# Matches single variables (a-z, A-Z, 0-9, up to 2 chars) or lone LaTeX
+# commands with no arguments (\infty, \alpha, \pi …).
+_SINGLE_SYMBOL_RE = re.compile(r"^[a-zA-Z0-9]{1,2}$|^\\[a-zA-Z]+$")
+
+
+def _strip_latex_delimiters(latex: str) -> str:
+    """Remove outer LaTeX math delimiters, returning bare content."""
+    s = latex.strip()
+    s = re.sub(r"\\begin\{[^}]*\}(.*?)\\end\{[^}]*\}", r"\1", s, flags=re.DOTALL)
+    if s.startswith("$$") and s.endswith("$$"):
+        s = s[2:-2]
+    elif s.startswith("\\[") and s.endswith("\\]"):
+        s = s[2:-2]
+    elif s.startswith("$") and s.endswith("$"):
+        s = s[1:-1]
+    return s.strip()
+
+
+def _is_clearly_trivial(latex: str) -> bool:
+    """True for single variables, digits, and lone LaTeX commands (\\infty, \\alpha)."""
+    return bool(_SINGLE_SYMBOL_RE.match(_strip_latex_delimiters(latex)))
+
+
+def _build_tuple_counts(latex_set: set[str]) -> dict[str, int]:
+    """Batch LaTeX → CMML → OPT tuple count used to rank formula complexity.
+
+    convert_batch2 outputs Content MathML, so we pair it with tree_type="OPT".
+    Using "SLT" here would silently return empty lists (SLT needs Presentation MathML).
+    The count is used only for ranking candidates, not for retrieval itself.
+    """
+    from multirag.formula_search.latex_mml import LatexToMathML
+    from multirag.formula_search.tuple_extraction import extract_tuples_from_mathml_direct
+
+    unique = list(latex_set)
+    mathml_list = LatexToMathML.convert_batch2(unique)
+    return {
+        lx: len(extract_tuples_from_mathml_direct(mml or "", tree_type="OPT"))
+        for lx, mml in zip(unique, mathml_list)
+    }
+
+
+def _select_formula_for_topic(
+    topic: dict,
+    tuple_counts: dict[str, int],
+) -> str | None:
+    """Pick the single best query formula for a topic.
+
+    Priority:
+    1. Highest-tuple-count non-trivial title formula.
+    2. Highest-tuple-count non-trivial question formula (if no title candidates).
+    3. Longest (by stripped length) formula when everything is clearly trivial.
+    """
+    title = topic.get("title", "")
+    formulas = topic.get("formulas", [])
+    if not formulas:
+        return None
+
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for f in formulas:
+        if f["latex"] not in seen:
+            seen.add(f["latex"])
+            unique.append(f)
+
+    def _in_title(f: dict) -> bool:
+        return f.get("in_title", f["latex"] in title)
+
+    title_candidates = [
+        f["latex"] for f in unique if _in_title(f) and not _is_clearly_trivial(f["latex"])
+    ]
+    question_candidates = [
+        f["latex"] for f in unique if not _in_title(f) and not _is_clearly_trivial(f["latex"])
+    ]
+
+    def _best(pool: list[str]) -> str | None:
+        return max(pool, key=lambda lx: tuple_counts.get(lx, 0)) if pool else None
+
+    return (
+        _best(title_candidates)
+        or _best(question_candidates)
+        or max((f["latex"] for f in unique), key=lambda lx: len(_strip_latex_delimiters(lx)))
+    )
+
+
 def generate_run_file(
     indexer: BaseIndexer,
     topics_path: str | os.PathLike[str],
@@ -146,13 +235,23 @@ def generate_run_file(
 
     # Formula indexer path: per-formula batch_search + within-topic RRF merge
     if isinstance(indexer, FormulaFAISSIndexerIVFScalarQuantizer):
-        # Flatten each topic's formulas into individual (unique_qid, latex) pairs
+        # Phase 1: batch-count OPT tuples for all non-trivial formula candidates
+        candidates = {
+            f["latex"]
+            for topic in topics_list
+            for f in topic.get("formulas", [])
+            if not _is_clearly_trivial(f["latex"])
+        }
+        tuple_counts = _build_tuple_counts(candidates)
+
+        # Phase 2: heuristic selection — one formula per topic
         formula_queries: list[tuple[str, str]] = []
         qid_to_topic: dict[str, str] = {}
         for topic in topics_list:
-            for i, formula in enumerate(topic.get("formulas", [])):
-                uqid = f"{topic['topic_id']}_f{i}"
-                formula_queries.append((uqid, formula["latex"]))
+            latex = _select_formula_for_topic(topic, tuple_counts)
+            if latex:
+                uqid = f"{topic['topic_id']}_f0"
+                formula_queries.append((uqid, latex))
                 qid_to_topic[uqid] = topic["topic_id"]
 
         if not formula_queries:

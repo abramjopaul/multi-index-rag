@@ -10,6 +10,7 @@ from lxml import etree  # type: ignore
 class TopicFormula:
     formula_id: str
     latex: str
+    in_title: bool = False
 
 
 @dataclass
@@ -51,7 +52,7 @@ class TopicReader:
         self.topic_file_path = Path(topic_file_path)
         self.map_topics: dict[str, Topic] = self._read_topics()
 
-    def _parse_formulas_text(self, raw_html: str) -> tuple[str, list[TopicFormula]]:
+    def _parse_formulas_text(self, raw_html: str, in_title: bool = False) -> tuple[str, list[TopicFormula]]:
         """
         Parse HTML text and extract formulas.
         
@@ -75,7 +76,7 @@ class TopicReader:
             formula_id = span.get("id", "")
             latex_text = span.get_text().strip()
             formulas.append(
-                TopicFormula(formula_id=formula_id, latex=latex_text)
+                TopicFormula(formula_id=formula_id, latex=latex_text, in_title=in_title)
             )
             # Replace span with just its text content (preserves $...$ in plain_text)
             span.replace_with(latex_text)
@@ -104,9 +105,9 @@ class TopicReader:
 
             tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
 
-            title_text, title_formulas = self._parse_formulas_text(title_raw)
+            title_text, title_formulas = self._parse_formulas_text(title_raw, in_title=True)
 
-            question_text, formulas = self._parse_formulas_text(question_raw)
+            question_text, formulas = self._parse_formulas_text(question_raw, in_title=False)
 
             map_topics[topic_id] = Topic(
                 topic_id=topic_id,
