@@ -1,15 +1,21 @@
 """Pyserini-based sparse (BM25) indexer."""
 
+from __future__ import annotations
+
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
 
-from pyserini.index.lucene import LuceneIndexer
-from pyserini.search.lucene import LuceneSearcher
 from tqdm import tqdm
 
 from multirag.indexing.base import BaseIndexer
+
+# Suppress OpenAI initialization error in pyserini
+# Set a dummy key if not already set
+if not os.getenv("OPENAI_API_KEY"):
+    os.environ["OPENAI_API_KEY"] = "sk-dummy-key-for-pyserini"
 
 
 class PyseriniSparseIndexer(BaseIndexer):
@@ -36,6 +42,8 @@ class PyseriniSparseIndexer(BaseIndexer):
 
     def _get_indexer(self, append: bool = False) -> LuceneIndexer:
         """Get LuceneIndexer for building. Creates index if not present."""
+        from pyserini.index.lucene import LuceneIndexer
+        
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
         self._indexer = LuceneIndexer(str(self.index_path), append=append)
         return self._indexer
@@ -91,6 +99,8 @@ class PyseriniSparseIndexer(BaseIndexer):
 
     def _get_searcher(self) -> LuceneSearcher:
         if self._searcher is None:
+            from pyserini.search.lucene import LuceneSearcher
+            
             self._searcher = LuceneSearcher(str(self.index_path))
             self._searcher.set_bm25(k1=self.k1, b=self.b)
         return self._searcher

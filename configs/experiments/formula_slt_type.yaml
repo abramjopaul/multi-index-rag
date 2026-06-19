@@ -1,4 +1,4 @@
-run_name: "formula_slt_type_sq"
+run_name: "formula_slt_type_sq_heuristic"
 index_type: "formula"
 
 # Retrieval parameters
@@ -17,5 +17,5 @@ formula_tsv_base_dir: null
 
 # Optional
 index_corpus_limit: null
-force_rebuild: true
+force_rebuild: false
 experiment_name: "Formula Index Runs"
