@@ -75,8 +75,8 @@ def main() -> None:
     print()
 
     try:
-        preprocess_posts()
-        # preprocess_topics()
+        # preprocess_posts()
+        preprocess_topics()
 
         print("=" * 70)
         print("✓ PREPROCESSING COMPLETE")
