@@ -5,6 +5,7 @@
 # embeddings into a single 300-dim vector per formula.
 
 import csv
+import gc
 import json
 import sys
 import logging
@@ -384,16 +385,24 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         shared = slt_names & opt_names
         return sorted([slt_dir / name for name in shared], key=lambda p: int(p.stem))
 
-    def _load_tsv_as_dict(self, tsv_file: Path) -> dict[str, str]:
-        """Load a TSV file into {formula_id: mathml} dict."""
+    def _load_tsv_as_dict(self, tsv_file: Path, filter_ids: Optional[set[str]] = None) -> dict[str, str]:
+        """Load a TSV file into {formula_id: mathml} dict.
+
+        filter_ids: if given, only rows whose id is in the set are kept —
+        avoids materialising MathML strings for formulas not in the corpus.
+        """
         csv.field_size_limit(sys.maxsize)
         result: dict[str, str] = {}
         with open(tsv_file, newline="") as f:
             reader = csv.DictReader(f, delimiter="\t")
             for row in reader:
                 fid = row.get("id", "").strip()
+                if not fid:
+                    continue
+                if filter_ids is not None and fid not in filter_ids:
+                    continue
                 mathml = row.get("formula", "").strip()
-                if fid and mathml:
+                if mathml:
                     result[fid] = mathml
         return result
 
@@ -419,10 +428,41 @@ class FormulaFAISSIndexerFused(BaseIndexer):
             json.dump({"processed_tsv_files": processed_files, "indexed_count": indexed_count, "trained": trained}, f)
         tmp.replace(cp)
 
+    def _id_map_jsonl_path(self) -> Path:
+        return self.index_path / "id_map_fused_sq.jsonl"
+
+    def _append_id_map_entries(self, entries: dict[int, tuple[str, str]]) -> None:
+        """Append id_map entries to the JSONL file — never accumulates in RAM."""
+        with open(self._id_map_jsonl_path(), "a") as f:
+            for k, v in entries.items():
+                f.write(json.dumps({str(k): list(v)}) + "\n")
+
+    def _load_id_map_from_jsonl(self) -> dict[int, tuple[str, str]]:
+        jsonl = self._id_map_jsonl_path()
+        result: dict[int, tuple[str, str]] = {}
+        if not jsonl.exists():
+            return result
+        with open(jsonl) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    for k, v in entry.items():
+                        result[int(k)] = tuple(v)
+                except (json.JSONDecodeError, ValueError):
+                    continue  # skip corrupted lines
+        return result
+
     def _collect_training_vectors(
-        self, shared_tsv_files: list[Path], train_size: int
+        self, shared_tsv_files: list[Path], fid_set: set[str], train_size: int
     ) -> np.ndarray:
-        """Collect up to train_size fused embedding vectors for FAISS IVF training."""
+        """Collect up to train_size fused embedding vectors for FAISS IVF training.
+
+        Streams SLT TSV row-by-row; loads OPT TSV filtered to corpus IDs only.
+        """
+        csv.field_size_limit(sys.maxsize)
         training_vectors: list[np.ndarray] = []
 
         for slt_tsv in tqdm(shared_tsv_files, desc="Collecting fused training vectors"):
@@ -430,16 +470,26 @@ class FormulaFAISSIndexerFused(BaseIndexer):
                 break
             opt_tsv = self._opt_tsv_dir / slt_tsv.name  # type: ignore
 
-            slt_dict = self._load_tsv_as_dict(slt_tsv)
-            opt_dict = self._load_tsv_as_dict(opt_tsv)
-            shared_ids = set(slt_dict.keys()) & set(opt_dict.keys())
+            # Load only OPT into memory, filtered to corpus formula IDs
+            opt_dict = self._load_tsv_as_dict(opt_tsv, filter_ids=fid_set)
 
-            for fid in shared_ids:
-                if len(training_vectors) >= train_size:
-                    break
-                vec = self._compute_fused_embedding(slt_dict[fid], opt_dict[fid])
-                if vec is not None:
-                    training_vectors.append(vec)
+            with open(slt_tsv, newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    if len(training_vectors) >= train_size:
+                        break
+                    fid = row.get("id", "").strip()
+                    if not fid or fid not in fid_set or fid not in opt_dict:
+                        continue
+                    slt_mathml = row.get("formula", "").strip()
+                    if not slt_mathml:
+                        continue
+                    vec = self._compute_fused_embedding(slt_mathml, opt_dict[fid])
+                    if vec is not None:
+                        training_vectors.append(vec)
+
+            del opt_dict
+            gc.collect()
 
         if len(training_vectors) < train_size:
             logger.warning(
@@ -450,13 +500,21 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         return np.array(training_vectors, dtype=np.float32)
 
     def _build_faiss_index_from_tsv(self, fid_to_meta: dict[str, tuple[str, str]]) -> None:
-        """Stream paired SLT+OPT TSV files to build the fused FAISS index."""
+        """Stream paired SLT+OPT TSV files to build the fused FAISS index.
+
+        Memory strategy:
+        - OPT TSV loaded as a filtered dict (corpus IDs only); SLT TSV streamed row-by-row.
+        - id_map entries written directly to a JSONL file per mini-batch — never held in RAM.
+        - Explicit del + gc.collect() after each file to release MathML strings.
+        """
+        csv.field_size_limit(sys.maxsize)
         shared_tsv_files = self._shared_tsv_files()
         if not shared_tsv_files:
             raise ValueError(
                 f"No shared TSV files found between {self._slt_tsv_dir} and {self._opt_tsv_dir}"
             )
 
+        fid_set = set(fid_to_meta.keys())
         index_file = self.index_path / "formula_index_fused_sq.faiss"
         cp = self._load_tsv_checkpoint()
         processed_set: set[str] = set(cp.get("processed_tsv_files", []))
@@ -470,7 +528,8 @@ class FormulaFAISSIndexerFused(BaseIndexer):
                 len(fid_to_meta),
             )
             logger.info(f"Collecting {train_size:,} fused training vectors...")
-            training_vectors = self._collect_training_vectors(shared_tsv_files, train_size)
+            training_vectors = self._collect_training_vectors(shared_tsv_files, fid_set, train_size)
+            gc.collect()
 
             logger.info(f"Training FAISS index on {len(training_vectors):,} vectors...")
             quantizer = faiss.IndexFlat(self.DIMENSION)
@@ -491,6 +550,7 @@ class FormulaFAISSIndexerFused(BaseIndexer):
 
             self._index.nprobe = self.nprobe
             del training_vectors
+            gc.collect()
 
             faiss.write_index(self._index, str(index_file))
             self._save_tsv_checkpoint(list(processed_set), indexed_count, trained=True)
@@ -499,19 +559,7 @@ class FormulaFAISSIndexerFused(BaseIndexer):
             logger.info(f"Resuming from checkpoint ({len(processed_set)} TSV files already done)...")
             self._index = faiss.read_index(str(index_file))
             self._index.nprobe = self.nprobe
-
-            id_map_file = self.index_path / "id_map_fused_sq.json"
-            if id_map_file.exists():
-                try:
-                    with open(id_map_file) as f:
-                        raw = json.load(f)
-                    self.id_map = {int(k): tuple(v) for k, v in raw.items()}
-                except (json.JSONDecodeError, ValueError):
-                    logger.warning(
-                        f"id_map file is empty or corrupted ({id_map_file}); "
-                        "starting with empty id_map — previously indexed vectors will lack metadata"
-                    )
-                    self.id_map = {}
+            # id_map is in JSONL on disk — no need to load it during indexing
 
         # Phase 2: Add vectors file by file
         remaining = [f for f in shared_tsv_files if f.name not in processed_set]
@@ -522,42 +570,57 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         for slt_tsv in tqdm(remaining, desc="Indexing TSV pairs (fused)"):
             opt_tsv = self._opt_tsv_dir / slt_tsv.name  # type: ignore
 
-            slt_dict = self._load_tsv_as_dict(slt_tsv)
-            opt_dict = self._load_tsv_as_dict(opt_tsv)
+            # Only load OPT into memory, filtered to corpus IDs
+            opt_dict = self._load_tsv_as_dict(opt_tsv, filter_ids=fid_set)
 
             batch_vectors: list[np.ndarray] = []
             batch_metas: list[tuple[str, str]] = []
 
-            for fid in slt_dict:
-                if fid not in fid_to_meta or fid not in opt_dict:
-                    continue
+            # Stream SLT row-by-row — never fully materialized in RAM
+            with open(slt_tsv, newline="") as f:
+                reader = csv.DictReader(f, delimiter="\t")
+                for row in reader:
+                    fid = row.get("id", "").strip()
+                    if not fid or fid not in fid_set or fid not in opt_dict:
+                        continue
+                    slt_mathml = row.get("formula", "").strip()
+                    if not slt_mathml:
+                        continue
 
-                vec = self._compute_fused_embedding(slt_dict[fid], opt_dict[fid])
-                if vec is None:
-                    failed_count += 1
-                    continue
+                    vec = self._compute_fused_embedding(slt_mathml, opt_dict[fid])
+                    if vec is None:
+                        failed_count += 1
+                        continue
 
-                batch_vectors.append(vec)
-                batch_metas.append(fid_to_meta[fid])
+                    batch_vectors.append(vec)
+                    batch_metas.append(fid_to_meta[fid])
 
-                if len(batch_vectors) >= _TSV_MINI_BATCH:
-                    base_idx = self._index.ntotal  # type: ignore
-                    self._index.add(np.array(batch_vectors, dtype=np.float32))  # type: ignore
-                    for i, meta in enumerate(batch_metas):
-                        self.id_map[base_idx + i] = meta
-                    indexed_count += len(batch_vectors)
-                    batch_vectors = []
-                    batch_metas = []
+                    if len(batch_vectors) >= _TSV_MINI_BATCH:
+                        base_idx = self._index.ntotal  # type: ignore
+                        arr = np.array(batch_vectors, dtype=np.float32)
+                        self._index.add(arr)  # type: ignore
+                        self._append_id_map_entries(
+                            {base_idx + i: m for i, m in enumerate(batch_metas)}
+                        )
+                        indexed_count += len(batch_vectors)
+                        batch_vectors = []
+                        batch_metas = []
 
+            # Flush remainder
             if batch_vectors:
                 base_idx = self._index.ntotal  # type: ignore
                 self._index.add(np.array(batch_vectors, dtype=np.float32))  # type: ignore
-                for i, meta in enumerate(batch_metas):
-                    self.id_map[base_idx + i] = meta
+                self._append_id_map_entries(
+                    {base_idx + i: m for i, m in enumerate(batch_metas)}
+                )
                 indexed_count += len(batch_vectors)
 
+            # Release this file's MathML strings before the next file loads
+            del opt_dict, batch_vectors, batch_metas
+            gc.collect()
+
             processed_set.add(slt_tsv.name)
-            self._save_index_to_disk()
+            faiss.write_index(self._index, str(index_file))
             self._save_tsv_checkpoint(list(processed_set), indexed_count, trained=True)
             logger.info(f"Checkpoint: {slt_tsv.name} done — {indexed_count:,} vectors indexed total")
 
@@ -634,8 +697,18 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         logger.info(f"Adding {len(embeddings)} fused vectors...")
         self._index.add(embeddings_array)  # type: ignore
 
+        # Write id_map to JSONL in batches — keeps RAM usage flat
+        jsonl = self._id_map_jsonl_path()
+        jsonl.unlink(missing_ok=True)  # start fresh for bulk path
+        _BULK_WRITE_BATCH = 100_000
+        entries: dict[int, tuple[str, str]] = {}
         for idx, formula_data in enumerate(formulas):
-            self.id_map[idx] = (formula_data["answer_id"], formula_data["formula_id"])
+            entries[idx] = (formula_data["answer_id"], formula_data["formula_id"])
+            if len(entries) >= _BULK_WRITE_BATCH:
+                self._append_id_map_entries(entries)
+                entries = {}
+        if entries:
+            self._append_id_map_entries(entries)
 
         logger.info(f"Built fused index: {self._index.ntotal} vectors")
 
@@ -644,6 +717,7 @@ class FormulaFAISSIndexerFused(BaseIndexer):
     # -------------------------------------------------------------------------
 
     def _save_index_to_disk(self) -> None:
+        """Save FAISS index to disk. id_map is managed separately via JSONL."""
         if self._index is None:
             logger.warning("No fused index to save")
             return
@@ -652,33 +726,24 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         faiss.write_index(self._index, str(index_file))
         logger.info(f"Saved fused index to {index_file}")
 
-        id_map_file = self.index_path / "id_map_fused_sq.json"
-        tmp_id_map = id_map_file.with_suffix(".json.tmp")
-        with open(tmp_id_map, "w") as f:
-            json.dump({str(k): v for k, v in self.id_map.items()}, f)
-        tmp_id_map.replace(id_map_file)
-        logger.info(f"Saved fused ID map to {id_map_file}")
-
     def _load_index_from_disk(self) -> None:
         index_file = self.index_path / "formula_index_fused_sq.faiss"
-        id_map_file = self.index_path / "id_map_fused_sq.json"
+        jsonl_file = self._id_map_jsonl_path()
 
         if not index_file.exists():
             logger.warning(f"Fused index file not found: {index_file}")
             return
-        if not id_map_file.exists():
-            logger.warning(f"Fused ID map not found: {id_map_file}")
+        if not jsonl_file.exists():
+            logger.warning(f"Fused ID map not found: {jsonl_file}")
             return
 
         self._index = faiss.read_index(str(index_file))
         self._index.nprobe = self.nprobe
 
-        try:
-            with open(id_map_file) as f:
-                raw = json.load(f)
-            self.id_map = {int(k): tuple(v) for k, v in raw.items()}
-        except (json.JSONDecodeError, ValueError):
-            logger.warning(f"id_map file is empty or corrupted ({id_map_file}); id_map will be empty")
+        logger.info(f"Loading id_map from {jsonl_file}...")
+        self.id_map = self._load_id_map_from_jsonl()
+        if not self.id_map:
+            logger.warning("id_map is empty after loading — search results will be empty")
             self.id_map = {}
 
         logger.info(f"Loaded fused index: {self._index.ntotal} vectors, nprobe={self.nprobe}")
