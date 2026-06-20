@@ -402,14 +402,22 @@ class FormulaFAISSIndexerFused(BaseIndexer):
 
     def _load_tsv_checkpoint(self) -> dict:
         cp = self._tsv_checkpoint_path()
+        _empty = {"processed_tsv_files": [], "indexed_count": 0, "trained": False}
         if not cp.exists():
-            return {"processed_tsv_files": [], "indexed_count": 0, "trained": False}
-        with open(cp) as f:
-            return json.load(f)
+            return _empty
+        try:
+            with open(cp) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(f"Checkpoint file corrupted ({cp}); starting fresh")
+            return _empty
 
     def _save_tsv_checkpoint(self, processed_files: list[str], indexed_count: int, trained: bool) -> None:
-        with open(self._tsv_checkpoint_path(), "w") as f:
+        cp = self._tsv_checkpoint_path()
+        tmp = cp.with_suffix(".json.tmp")
+        with open(tmp, "w") as f:
             json.dump({"processed_tsv_files": processed_files, "indexed_count": indexed_count, "trained": trained}, f)
+        tmp.replace(cp)
 
     def _collect_training_vectors(
         self, shared_tsv_files: list[Path], train_size: int
@@ -494,9 +502,16 @@ class FormulaFAISSIndexerFused(BaseIndexer):
 
             id_map_file = self.index_path / "id_map_fused_sq.json"
             if id_map_file.exists():
-                with open(id_map_file) as f:
-                    raw = json.load(f)
+                try:
+                    with open(id_map_file) as f:
+                        raw = json.load(f)
                     self.id_map = {int(k): tuple(v) for k, v in raw.items()}
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(
+                        f"id_map file is empty or corrupted ({id_map_file}); "
+                        "starting with empty id_map — previously indexed vectors will lack metadata"
+                    )
+                    self.id_map = {}
 
         # Phase 2: Add vectors file by file
         remaining = [f for f in shared_tsv_files if f.name not in processed_set]
@@ -638,8 +653,10 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         logger.info(f"Saved fused index to {index_file}")
 
         id_map_file = self.index_path / "id_map_fused_sq.json"
-        with open(id_map_file, "w") as f:
+        tmp_id_map = id_map_file.with_suffix(".json.tmp")
+        with open(tmp_id_map, "w") as f:
             json.dump({str(k): v for k, v in self.id_map.items()}, f)
+        tmp_id_map.replace(id_map_file)
         logger.info(f"Saved fused ID map to {id_map_file}")
 
     def _load_index_from_disk(self) -> None:
@@ -656,9 +673,13 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         self._index = faiss.read_index(str(index_file))
         self._index.nprobe = self.nprobe
 
-        with open(id_map_file) as f:
-            raw = json.load(f)
+        try:
+            with open(id_map_file) as f:
+                raw = json.load(f)
             self.id_map = {int(k): tuple(v) for k, v in raw.items()}
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(f"id_map file is empty or corrupted ({id_map_file}); id_map will be empty")
+            self.id_map = {}
 
         logger.info(f"Loaded fused index: {self._index.ntotal} vectors, nprobe={self.nprobe}")
 
