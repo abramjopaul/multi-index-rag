@@ -9,6 +9,7 @@ import gc
 import json
 import sys
 import logging
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, Optional
 
@@ -31,7 +32,7 @@ from multirag.indexing.base import BaseIndexer
 
 logger = logging.getLogger(__name__)
 
-_TSV_MINI_BATCH = 1024
+_TSV_MINI_BATCH = 8192
 
 _REPRESENTATIONS = ["slt", "opt", "slt_type"]
 _TREE_TYPE_MAP = {"slt": "SLT", "opt": "OPT", "slt_type": "SLT-TYPE"}
@@ -40,6 +41,38 @@ _TREE_TYPE_MAP = {"slt": "SLT", "opt": "OPT", "slt_type": "SLT-TYPE"}
 def _l2_normalize(v: np.ndarray) -> np.ndarray:
     norm = np.linalg.norm(v)
     return v / norm if norm > 1e-10 else v
+
+
+# Module-level state populated before pool creation; inherited by fork workers.
+_WORKER_STATE: dict = {}
+
+
+def _embed_worker(args: tuple) -> tuple[Optional[np.ndarray], tuple[str, str]]:
+    """Compute fused embedding for one formula. Runs inside a worker process.
+
+    args = (slt_mathml, opt_mathml, meta)
+    Returns (vec, meta) or (None, meta) if any representation fails.
+    Reads FastText models from _WORKER_STATE, which fork workers inherit from
+    the parent process at zero extra RAM cost (copy-on-write shared pages).
+    """
+    slt_mathml, opt_mathml, meta = args
+    managers = _WORKER_STATE["managers"]
+    tokenizers = _WORKER_STATE["tokenizers"]
+    mathml_for = {"slt": slt_mathml, "opt": opt_mathml, "slt_type": slt_mathml}
+    vecs: dict[str, np.ndarray] = {}
+    for rep in _REPRESENTATIONS:
+        try:
+            tuples = extract_tuples_from_mathml_direct(mathml_for[rep], tree_type=_TREE_TYPE_MAP[rep])  # type: ignore[arg-type]
+            if not tuples:
+                return None, meta
+            encoded = encode_tuples(tuples, tokenizers[rep])
+            if not encoded:
+                return None, meta
+            vecs[rep] = np.array(managers[rep].get_sentence_vector(encoded), dtype=np.float32)
+        except Exception:
+            return None, meta
+    combined = _l2_normalize(vecs["slt"]) + _l2_normalize(vecs["opt"]) + _l2_normalize(vecs["slt_type"])
+    return _l2_normalize(combined), meta
 
 
 class FormulaFAISSIndexerFused(BaseIndexer):
@@ -70,6 +103,7 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         force_rebuild: bool = False,
         formula_tsv_base_dir: Optional[str] = None,
         device: str = "auto",
+        n_workers: int | None = None,
     ):
         """
         Args:
@@ -90,6 +124,7 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         self.nprobe = nprobe
         self.force_rebuild = force_rebuild
         self.device = device
+        self.n_workers = n_workers if n_workers is not None else _get_optimal_workers()
 
         self._index = None
         self.id_map: dict[int, tuple[str, str]] = {}
@@ -456,37 +491,46 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         return result
 
     def _collect_training_vectors(
-        self, shared_tsv_files: list[Path], fid_set: set[str], train_size: int
+        self,
+        shared_tsv_files: list[Path],
+        fid_set: set[str],
+        train_size: int,
+        executor: ProcessPoolExecutor,
     ) -> np.ndarray:
         """Collect up to train_size fused embedding vectors for FAISS IVF training.
 
         Streams SLT TSV row-by-row; loads OPT TSV filtered to corpus IDs only.
+        Embedding computation is parallelised via the provided executor.
         """
         csv.field_size_limit(sys.maxsize)
         training_vectors: list[np.ndarray] = []
+
+        def _work_gen(slt_path: Path, opt_d: dict, n: int):
+            count = 0
+            with open(slt_path, newline="") as f:
+                for row in csv.DictReader(f, delimiter="\t"):
+                    if count >= n:
+                        break
+                    fid = row.get("id", "").strip()
+                    if not fid or fid not in fid_set or fid not in opt_d:
+                        continue
+                    slt_mathml = row.get("formula", "").strip()
+                    if slt_mathml:
+                        yield (slt_mathml, opt_d[fid], (fid, fid))
+                        count += 1
 
         for slt_tsv in tqdm(shared_tsv_files, desc="Collecting fused training vectors"):
             if len(training_vectors) >= train_size:
                 break
             opt_tsv = self._opt_tsv_dir / slt_tsv.name  # type: ignore
-
-            # Load only OPT into memory, filtered to corpus formula IDs
             opt_dict = self._load_tsv_as_dict(opt_tsv, filter_ids=fid_set)
+            needed = train_size - len(training_vectors)
 
-            with open(slt_tsv, newline="") as f:
-                reader = csv.DictReader(f, delimiter="\t")
-                for row in reader:
-                    if len(training_vectors) >= train_size:
-                        break
-                    fid = row.get("id", "").strip()
-                    if not fid or fid not in fid_set or fid not in opt_dict:
-                        continue
-                    slt_mathml = row.get("formula", "").strip()
-                    if not slt_mathml:
-                        continue
-                    vec = self._compute_fused_embedding(slt_mathml, opt_dict[fid])
-                    if vec is not None:
-                        training_vectors.append(vec)
+            for vec, _ in executor.map(
+                _embed_worker, _work_gen(slt_tsv, opt_dict, needed), chunksize=256
+            ):
+                if vec is not None:
+                    training_vectors.append(vec)
 
             del opt_dict
             gc.collect()
@@ -506,6 +550,7 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         - OPT TSV loaded as a filtered dict (corpus IDs only); SLT TSV streamed row-by-row.
         - id_map entries written directly to a JSONL file per mini-batch — never held in RAM.
         - Explicit del + gc.collect() after each file to release MathML strings.
+        - Embedding computation parallelised across self.n_workers processes (Linux fork).
         """
         csv.field_size_limit(sys.maxsize)
         shared_tsv_files = self._shared_tsv_files()
@@ -521,84 +566,88 @@ class FormulaFAISSIndexerFused(BaseIndexer):
         indexed_count: int = cp.get("indexed_count", 0)
         already_trained: bool = cp.get("trained", False)
 
-        # Phase 1: Train
-        if not already_trained:
-            train_size = min(
-                max(len(fid_to_meta) // 10, self.NLIST * 40),
-                len(fid_to_meta),
-            )
-            logger.info(f"Collecting {train_size:,} fused training vectors...")
-            training_vectors = self._collect_training_vectors(shared_tsv_files, fid_set, train_size)
-            gc.collect()
+        # Expose pre-loaded models to fork workers via module-level state.
+        # On Linux (fork), workers inherit this dict at zero extra RAM cost.
+        _WORKER_STATE["managers"] = self._model_managers
+        _WORKER_STATE["tokenizers"] = self._tuple_tokenizers
 
-            logger.info(f"Training FAISS index on {len(training_vectors):,} vectors...")
-            quantizer = faiss.IndexFlat(self.DIMENSION)
-            cpu_index = faiss.IndexIVFScalarQuantizer(
-                quantizer, self.DIMENSION, self.NLIST, self.QUANTIZER_TYPE
-            )
-
-            if self._resolved_device() == "cuda":
-                logger.info("Moving index to GPU for training...")
-                res = getattr(faiss, "StandardGpuResources")()
-                gpu_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)  # type: ignore
-                gpu_index.train(training_vectors)
-                self._index = faiss.index_gpu_to_cpu(gpu_index)  # type: ignore
-                logger.info("Training complete; index moved back to CPU")
-            else:
-                cpu_index.train(training_vectors)  # type: ignore
-                self._index = cpu_index
-
-            self._index.nprobe = self.nprobe
-            del training_vectors
-            gc.collect()
-
-            faiss.write_index(self._index, str(index_file))
-            self._save_tsv_checkpoint(list(processed_set), indexed_count, trained=True)
-            logger.info("Training complete; empty index saved.")
-        else:
-            logger.info(f"Resuming from checkpoint ({len(processed_set)} TSV files already done)...")
-            self._index = faiss.read_index(str(index_file))
-            self._index.nprobe = self.nprobe
-            # id_map is in JSONL on disk — no need to load it during indexing
-
-        # Phase 2: Add vectors file by file
-        remaining = [f for f in shared_tsv_files if f.name not in processed_set]
-        logger.info(f"Adding vectors from {len(remaining)} remaining TSV file pairs...")
-
-        failed_count = 0
-
-        for slt_tsv in tqdm(remaining, desc="Indexing TSV pairs (fused)"):
-            opt_tsv = self._opt_tsv_dir / slt_tsv.name  # type: ignore
-
-            # Only load OPT into memory, filtered to corpus IDs
-            opt_dict = self._load_tsv_as_dict(opt_tsv, filter_ids=fid_set)
-
-            batch_vectors: list[np.ndarray] = []
-            batch_metas: list[tuple[str, str]] = []
-
-            # Stream SLT row-by-row — never fully materialized in RAM
-            with open(slt_tsv, newline="") as f:
-                reader = csv.DictReader(f, delimiter="\t")
-                for row in reader:
+        def _work_gen(slt_path: Path, opt_d: dict):
+            with open(slt_path, newline="") as f:
+                for row in csv.DictReader(f, delimiter="\t"):
                     fid = row.get("id", "").strip()
-                    if not fid or fid not in fid_set or fid not in opt_dict:
+                    if not fid or fid not in fid_set or fid not in opt_d:
                         continue
                     slt_mathml = row.get("formula", "").strip()
-                    if not slt_mathml:
-                        continue
+                    if slt_mathml:
+                        yield (slt_mathml, opt_d[fid], fid_to_meta[fid])
 
-                    vec = self._compute_fused_embedding(slt_mathml, opt_dict[fid])
+        with ProcessPoolExecutor(max_workers=self.n_workers) as executor:
+
+            # Phase 1: Train
+            if not already_trained:
+                train_size = min(
+                    max(len(fid_to_meta) // 10, self.NLIST * 40),
+                    len(fid_to_meta),
+                )
+                logger.info(f"Collecting {train_size:,} fused training vectors ({self.n_workers} workers)...")
+                training_vectors = self._collect_training_vectors(
+                    shared_tsv_files, fid_set, train_size, executor
+                )
+                gc.collect()
+
+                logger.info(f"Training FAISS index on {len(training_vectors):,} vectors...")
+                quantizer = faiss.IndexFlat(self.DIMENSION)
+                cpu_index = faiss.IndexIVFScalarQuantizer(
+                    quantizer, self.DIMENSION, self.NLIST, self.QUANTIZER_TYPE
+                )
+
+                if self._resolved_device() == "cuda":
+                    logger.info("Moving index to GPU for training...")
+                    res = getattr(faiss, "StandardGpuResources")()
+                    gpu_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)  # type: ignore
+                    gpu_index.train(training_vectors)
+                    self._index = faiss.index_gpu_to_cpu(gpu_index)  # type: ignore
+                    logger.info("Training complete; index moved back to CPU")
+                else:
+                    cpu_index.train(training_vectors)  # type: ignore
+                    self._index = cpu_index
+
+                self._index.nprobe = self.nprobe
+                del training_vectors
+                gc.collect()
+
+                faiss.write_index(self._index, str(index_file))
+                self._save_tsv_checkpoint(list(processed_set), indexed_count, trained=True)
+                logger.info("Training complete; empty index saved.")
+            else:
+                logger.info(f"Resuming from checkpoint ({len(processed_set)} TSV files already done)...")
+                self._index = faiss.read_index(str(index_file))
+                self._index.nprobe = self.nprobe
+
+            # Phase 2: Add vectors file by file
+            remaining = [f for f in shared_tsv_files if f.name not in processed_set]
+            logger.info(f"Adding vectors from {len(remaining)} remaining TSV file pairs ({self.n_workers} workers)...")
+
+            failed_count = 0
+
+            for slt_tsv in tqdm(remaining, desc="Indexing TSV pairs (fused)"):
+                opt_tsv = self._opt_tsv_dir / slt_tsv.name  # type: ignore
+                opt_dict = self._load_tsv_as_dict(opt_tsv, filter_ids=fid_set)
+
+                batch_vectors: list[np.ndarray] = []
+                batch_metas: list[tuple[str, str]] = []
+
+                for vec, meta in executor.map(
+                    _embed_worker, _work_gen(slt_tsv, opt_dict), chunksize=256
+                ):
                     if vec is None:
                         failed_count += 1
                         continue
-
                     batch_vectors.append(vec)
-                    batch_metas.append(fid_to_meta[fid])
-
+                    batch_metas.append(meta)
                     if len(batch_vectors) >= _TSV_MINI_BATCH:
                         base_idx = self._index.ntotal  # type: ignore
-                        arr = np.array(batch_vectors, dtype=np.float32)
-                        self._index.add(arr)  # type: ignore
+                        self._index.add(np.array(batch_vectors, dtype=np.float32))  # type: ignore
                         self._append_id_map_entries(
                             {base_idx + i: m for i, m in enumerate(batch_metas)}
                         )
@@ -606,23 +655,21 @@ class FormulaFAISSIndexerFused(BaseIndexer):
                         batch_vectors = []
                         batch_metas = []
 
-            # Flush remainder
-            if batch_vectors:
-                base_idx = self._index.ntotal  # type: ignore
-                self._index.add(np.array(batch_vectors, dtype=np.float32))  # type: ignore
-                self._append_id_map_entries(
-                    {base_idx + i: m for i, m in enumerate(batch_metas)}
-                )
-                indexed_count += len(batch_vectors)
+                if batch_vectors:
+                    base_idx = self._index.ntotal  # type: ignore
+                    self._index.add(np.array(batch_vectors, dtype=np.float32))  # type: ignore
+                    self._append_id_map_entries(
+                        {base_idx + i: m for i, m in enumerate(batch_metas)}
+                    )
+                    indexed_count += len(batch_vectors)
 
-            # Release this file's MathML strings before the next file loads
-            del opt_dict, batch_vectors, batch_metas
-            gc.collect()
+                del opt_dict, batch_vectors, batch_metas
+                gc.collect()
 
-            processed_set.add(slt_tsv.name)
-            faiss.write_index(self._index, str(index_file))
-            self._save_tsv_checkpoint(list(processed_set), indexed_count, trained=True)
-            logger.info(f"Checkpoint: {slt_tsv.name} done — {indexed_count:,} vectors indexed total")
+                processed_set.add(slt_tsv.name)
+                faiss.write_index(self._index, str(index_file))
+                self._save_tsv_checkpoint(list(processed_set), indexed_count, trained=True)
+                logger.info(f"Checkpoint: {slt_tsv.name} done — {indexed_count:,} vectors indexed total")
 
         logger.info(
             f"Fused streaming indexing complete: {indexed_count:,} vectors, "
