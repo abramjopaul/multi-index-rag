@@ -129,11 +129,7 @@ def generate_run_file(
     """
     import logging as _logging
     # Inline import to avoid circular dependency at module level
-    from multirag.formula_search.formula_selector import (
-        _batch_extract_tuples,
-        select_fanout,
-        select_heuristic,
-    )
+    from multirag.indexing.formula.faiss_fused import FormulaFAISSIndexerFused
     from multirag.indexing.formula.faiss_scalar_quantizer import (
         FormulaFAISSIndexerIVFScalarQuantizer,
     )
@@ -164,15 +160,7 @@ def generate_run_file(
 
     # Formula indexer path: per-formula batch_search + within-topic RRF merge
     if isinstance(indexer, FormulaFAISSIndexerIVFScalarQuantizer):
-        # Phase 1: batch-extract OPT tuples for all topic formulas
-        all_latex: list[str] = list({
-            f["latex"]
-            for topic in topics_list
-            for f in topic.get("formulas", [])
-        })
-        tuple_map = _batch_extract_tuples(all_latex)
-
-        # Phase 2: select query formulas per topic (fanout or heuristic)
+        # Flatten each topic's formulas into individual (unique_qid, latex) pairs
         formula_queries: list[tuple[str, str]] = []
         qid_to_topic: dict[str, str] = {}
         for topic in topics_list:
