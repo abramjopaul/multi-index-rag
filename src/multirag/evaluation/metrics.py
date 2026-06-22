@@ -123,6 +123,7 @@ def generate_run_file(
         AttributeError: If indexer doesn't support batch_search.
     """
     # Inline import to avoid circular dependency at module level
+    from multirag.indexing.formula.faiss_fused import FormulaFAISSIndexerFused
     from multirag.indexing.formula.faiss_scalar_quantizer import (
         FormulaFAISSIndexerIVFScalarQuantizer,
     )
@@ -145,7 +146,7 @@ def generate_run_file(
         raise ValueError(f"No valid topics found in {topics_path}")
 
     # Formula indexer path: per-formula batch_search + within-topic RRF merge
-    if isinstance(indexer, FormulaFAISSIndexerIVFScalarQuantizer):
+    if isinstance(indexer, (FormulaFAISSIndexerIVFScalarQuantizer, FormulaFAISSIndexerFused)):
         # Flatten each topic's formulas into individual (unique_qid, latex) pairs
         formula_queries: list[tuple[str, str]] = []
         qid_to_topic: dict[str, str] = {}
