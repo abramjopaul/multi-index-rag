@@ -140,6 +140,8 @@ def _load_candidate_mathml(
         with open(tsv_file, newline="") as f:
             reader = csv.DictReader(f, delimiter="\t")
             for row in reader:
+                if not remaining:
+                    break
                 fid = row.get("id", "")
                 if fid not in remaining:
                     continue
@@ -193,8 +195,10 @@ def main() -> int:
     try:
         logger.info("Loading config from %s", config_path)
         config: RerankerConfig = RerankerConfigManager.from_yaml(config_path)
-        run_name = config.run_name.replace(" ", "_")
-        run_name = f"{run_name}_{datetime.now().strftime('%Y%m%d')}"
+        run_name = (
+            f"rerank_{config.representation}_alpha{config.alpha}_n{config.n_candidates}"
+            f"_{datetime.now().strftime('%Y%m%d')}"
+        )
         logger.info("Config loaded: %s", run_name)
 
         if not args.dry_run:
@@ -294,6 +298,7 @@ def main() -> int:
                 }
             )
             wandb.save(str(out_path), base_path=RUNS_DIR)
+            wandb.save(str(stage1_path), base_path=stage1_path.parent)
             wandb.save(str(config_path), base_path=config_path.parent)
 
         print_evaluation_report(
