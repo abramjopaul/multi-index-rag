@@ -300,6 +300,10 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
             results[qid] = self.search(query, k)
         return results
 
+    def embed_formula(self, latex: str) -> np.ndarray:
+        """Embed a LaTeX formula string. FastText model is loaded lazily on first call."""
+        return self._generate_query_embedding(latex)
+
     def get_representations(self) -> list[str]:
         """Return representation being indexed."""
         return [self.representation]
