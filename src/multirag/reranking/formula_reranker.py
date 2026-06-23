@@ -26,13 +26,12 @@ class FormulaMaxSimReranker:
     blending: final = (1-alpha)*text_norm + alpha*formula_norm.
 
     Two embedding paths:
-    - Topic formulas: subprocess-based LaTeX→MathML→tuples→FastText (query-time).
-    - Candidate formulas: pre-computed MathML lookup from TSV files → tuples→FastText
-      (no subprocess). Falls back to subprocess if a formula_id is missing from the
-      lookup dict.
+    - Topic formulas: subprocess-based LaTeX→MathML (main thread only, precomputed
+      upfront before any worker thread starts).
+    - Candidate formulas: pre-computed MathML dict lookup → tuples→FastText.
+      TSV miss → formula is skipped (no subprocess from worker threads).
 
-    Candidate scoring is parallelized across all available CPU cores using threads.
-    The FastText model is shared across threads (read-only after load).
+    A single ThreadPoolExecutor is shared across all topics to avoid churn.
     """
 
     def __init__(
@@ -45,11 +44,10 @@ class FormulaMaxSimReranker:
     ):
         """
         Args:
-            embedding_dir: Directory containing trained FastText models
-                           (same layout as used by FormulaFAISSIndexerIVFScalarQuantizer).
-            representation: Formula embedding type — "slt", "opt", or "slt_type".
+            embedding_dir: Directory containing trained FastText models.
+            representation: "slt", "opt", or "slt_type".
             alpha: Blend weight in [0, 1]. 0 = pure text, 1 = pure formula.
-            aggregation: How to collapse per-topic-formula MaxSim scores: "max", "mean", or "sum".
+            aggregation: Aggregate per-topic-formula MaxSim scores: "max", "mean", or "sum".
             n_candidates: Number of stage-1 candidates to rerank per topic.
         """
         if aggregation not in {"max", "mean", "sum"}:
@@ -66,7 +64,7 @@ class FormulaMaxSimReranker:
         self._embedder = None
         self._embedder_lock = threading.Lock()
         self._num_workers = os.cpu_count() or 1
-        logger.info("FormulaMaxSimReranker: using %d worker threads", self._num_workers)
+        logger.info("FormulaMaxSimReranker: %d worker threads", self._num_workers)
 
     # ------------------------------------------------------------------
     # Embedder lifecycle
@@ -76,7 +74,7 @@ class FormulaMaxSimReranker:
         """Lazy-load FormulaFAISSIndexerIVFScalarQuantizer (embedding only, no FAISS index).
 
         Thread-safe via double-checked locking. The warm-up call ensures
-        _query_model_manager is set before any worker thread uses it.
+        _query_model_manager is fully set before any worker thread uses it.
         """
         if self._embedder is not None:
             return self._embedder
@@ -91,7 +89,7 @@ class FormulaMaxSimReranker:
                     embedding_dir=str(self.embedding_dir),
                     representation=self.representation,
                 )
-                embedder.embed_formula("x")  # warm up: sets _query_model_manager before threads start
+                embedder.embed_formula("x")  # warm up before threads start
                 self._embedder = embedder
         return self._embedder
 
@@ -100,12 +98,16 @@ class FormulaMaxSimReranker:
     # ------------------------------------------------------------------
 
     def _embed_from_latex(self, latex: str) -> np.ndarray | None:
-        """Subprocess path: LaTeX → MathML (subprocess) → tuples → FastText vector."""
+        """Subprocess path: LaTeX → MathML (subprocess) → FastText vector.
+        MUST only be called from the main thread.
+        """
         vec = self._get_embedder().embed_formula(latex)
         return vec if (vec is not None and np.any(vec)) else None
 
     def _embed_from_mathml(self, mathml: str) -> np.ndarray | None:
-        """TSV path: pre-computed MathML → tuples → FastText vector (no subprocess)."""
+        """TSV path: pre-computed MathML → tuples → FastText vector (no subprocess).
+        Safe to call from worker threads.
+        """
         vec = self._get_embedder().embed_formula_from_mathml(mathml)
         return vec if (vec is not None and np.any(vec)) else None
 
@@ -114,13 +116,13 @@ class FormulaMaxSimReranker:
         return vec / norm if norm > 0 else vec
 
     # ------------------------------------------------------------------
-    # Formula-set embedding: two flavours
+    # Formula-set embedding
     # ------------------------------------------------------------------
 
     def _embed_topic_formula_set(self, latexes: list[str]) -> np.ndarray:
-        """Embed topic formulas via subprocess (LaTeX→MathML each time).
+        """Embed topic formulas via subprocess (main thread only).
 
-        Returns array [K, 300], K <= len(latexes).
+        Returns array [K, 300].
         """
         vecs = []
         for lx in latexes:
@@ -136,21 +138,18 @@ class FormulaMaxSimReranker:
         fid_latex_pairs: list[tuple[str, str]],
         formula_mathml: dict[str, str],
     ) -> np.ndarray:
-        """Embed candidate formulas using pre-computed MathML where available.
+        """Embed candidate formulas using pre-computed MathML (thread-safe, no subprocess).
 
-        For each (formula_id, latex) pair:
-        - Hit in formula_mathml → TSV path (no subprocess).
-        - Miss → subprocess fallback via LaTeX.
+        TSV miss → formula skipped (no subprocess fallback from worker threads).
 
         Returns array [K, 300].
         """
         vecs = []
-        for fid, lx in fid_latex_pairs:
+        for fid, _ in fid_latex_pairs:
             mathml = formula_mathml.get(fid)
-            if mathml:
-                v = self._embed_from_mathml(mathml)
-            else:
-                v = self._embed_from_latex(lx)
+            if not mathml:
+                continue  # skip — no subprocess from threads
+            v = self._embed_from_mathml(mathml)
             if v is not None:
                 vecs.append(self._l2_normalize(v))
         return np.array(vecs, dtype=np.float32) if vecs else np.empty((0, 300), dtype=np.float32)
@@ -189,7 +188,7 @@ class FormulaMaxSimReranker:
         answer_formulas: dict[str, list[tuple[str, str]]],
         formula_mathml: dict[str, str],
     ) -> tuple[str, float, float]:
-        """Score a single candidate. Designed to run concurrently in a thread pool."""
+        """Score a single candidate. Safe to run in a worker thread (no subprocess)."""
         fid_latex_pairs = answer_formulas.get(doc_id, [])
         cand_vecs = self._embed_candidate_formula_set(fid_latex_pairs, formula_mathml)
         return doc_id, text_score, self._formula_score(topic_vecs, cand_vecs)
@@ -197,6 +196,25 @@ class FormulaMaxSimReranker:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def _precompute_topic_vecs(
+        self, topics: list[dict[str, Any]]
+    ) -> dict[str, np.ndarray]:
+        """Embed all topic formula sets upfront — subprocess, main thread, sequential.
+
+        Must finish before the thread pool starts so that no worker thread ever
+        calls the subprocess path.
+        """
+        topic_vecs: dict[str, np.ndarray] = {}
+        for topic in tqdm(topics, desc="Embedding topic formulas (subprocess)", unit="topic"):
+            tid = topic["topic_id"]
+            latexes = [f["latex"] for f in topic.get("formulas", [])]
+            vecs = self._embed_topic_formula_set(latexes)
+            if len(vecs) > 0:
+                topic_vecs[tid] = vecs
+            else:
+                logger.debug("Topic %s: no embeddable formulas", tid)
+        return topic_vecs
 
     def rerank(
         self,
@@ -209,42 +227,32 @@ class FormulaMaxSimReranker:
 
         Args:
             run: Stage-1 run — {topic_id: [(doc_id, score), ...]} sorted by score desc.
-            topics: Topics loaded from topics.jsonl (each dict has "topic_id", "formulas").
+            topics: Topics loaded from topics.jsonl.
             answer_formulas: {answer_id: [(formula_id, latex), ...]} — non-trivial only.
             formula_mathml: {formula_id: pre_computed_mathml} from collection TSV shards.
-                            Used for candidate embedding; missing ids fall back to subprocess.
 
         Returns:
             Reranked run in the same format as `run`.
         """
-        topic_by_id = {t["topic_id"]: t for t in topics}
+        # Phase 1: load model + embed all topic formulas (main thread, subprocess)
+        self._get_embedder()
+        topic_vecs_cache = self._precompute_topic_vecs(topics)
+
         output: dict[str, list[tuple[str, float]]] = {}
 
-        self._get_embedder()  # force model load before spawning threads
+        # Phase 2: rerank candidates (thread pool, TSV path only — no subprocess)
+        with ThreadPoolExecutor(max_workers=self._num_workers) as executor:
+            for topic_id, ranked_docs in tqdm(
+                run.items(), desc="Reranking topics", unit="topic"
+            ):
+                topic_vecs = topic_vecs_cache.get(topic_id)
+                if topic_vecs is None:
+                    output[topic_id] = ranked_docs
+                    continue
 
-        for topic_id, ranked_docs in tqdm(run.items(), desc="Reranking topics", unit="topic"):
-            topic = topic_by_id.get(topic_id)
-            if topic is None:
-                logger.warning("Topic %s not found in topics.jsonl — keeping original order", topic_id)
-                output[topic_id] = ranked_docs
-                continue
+                pool = ranked_docs[: self.n_candidates]
+                tail = ranked_docs[self.n_candidates :]
 
-            pool = ranked_docs[: self.n_candidates]
-            tail = ranked_docs[self.n_candidates :]
-
-            # Topic formulas: subprocess path (query-time LaTeX→MathML)
-            topic_latexes = [f["latex"] for f in topic.get("formulas", [])]
-            topic_vecs = self._embed_topic_formula_set(topic_latexes)
-
-            if len(topic_vecs) == 0:
-                logger.debug("Topic %s has no embeddable formulas — keeping original order", topic_id)
-                output[topic_id] = ranked_docs
-                continue
-
-            # Candidate formulas: TSV MathML path (parallel across candidates)
-            results: list[tuple[str, float, float]] = []
-            n_workers = min(self._num_workers, len(pool))
-            with ThreadPoolExecutor(max_workers=n_workers) as executor:
                 futures = {
                     executor.submit(
                         self._score_candidate,
@@ -252,6 +260,7 @@ class FormulaMaxSimReranker:
                     ): doc_id
                     for doc_id, text_score in pool
                 }
+                results: list[tuple[str, float, float]] = []
                 for future in tqdm(
                     as_completed(futures),
                     total=len(futures),
@@ -261,19 +270,18 @@ class FormulaMaxSimReranker:
                 ):
                     results.append(future.result())
 
-            doc_ids = [r[0] for r in results]
-            text_scores = [r[1] for r in results]
-            formula_scores = [r[2] for r in results]
+                doc_ids = [r[0] for r in results]
+                text_scores = [r[1] for r in results]
+                formula_scores = [r[2] for r in results]
 
-            text_norm = self._minmax_normalize(text_scores)
-            formula_norm = self._minmax_normalize(formula_scores)
+                text_norm = self._minmax_normalize(text_scores)
+                formula_norm = self._minmax_normalize(formula_scores)
 
-            blended = [
-                (doc_id, (1 - self.alpha) * t + self.alpha * f)
-                for doc_id, t, f in zip(doc_ids, text_norm, formula_norm)
-            ]
-            blended.sort(key=lambda x: -x[1])
-
-            output[topic_id] = blended + tail
+                blended = [
+                    (doc_id, (1 - self.alpha) * t + self.alpha * f)
+                    for doc_id, t, f in zip(doc_ids, text_norm, formula_norm)
+                ]
+                blended.sort(key=lambda x: -x[1])
+                output[topic_id] = blended + tail
 
         return output
