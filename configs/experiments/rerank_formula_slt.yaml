@@ -22,5 +22,11 @@ representation: "slt"
 # null = defaults to data/formula-indexing (same as FORMULA_INDEX_DIR in path_configs.py)
 formula_embedding_dir: null
 
+# Base dir containing slt_representation_v3/ and opt_representation_v3/ TSV subdirs
+# with pre-computed MathML for candidate (corpus) formulas. Setting this avoids the
+# subprocess-based LaTeX→MathML conversion for candidate posts (much faster).
+# null = defaults to data/raw/collection/formula
+formula_tsv_base_dir: null
+
 # W&B experiment group name
 experiment_name: "formula_rerank_sweep"

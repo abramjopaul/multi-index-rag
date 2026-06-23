@@ -304,6 +304,35 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         """Embed a LaTeX formula string. FastText model is loaded lazily on first call."""
         return self._generate_query_embedding(latex)
 
+    def embed_formula_from_mathml(self, mathml: str) -> np.ndarray:
+        """Embed a formula from pre-computed MathML, bypassing the LaTeX→MathML subprocess.
+
+        Identical pipeline to _generate_query_embedding but starts after the subprocess step:
+        MathML → tuples → encoded tokens → FastText sentence vector.
+        """
+        if not hasattr(self, "_query_model_manager"):
+            mm, tok, _ = self._setup_model_and_tokenizer()
+            self._query_model_manager = mm
+            self._query_tokenizer = tok
+
+        tree_type_mapping = {"slt": "SLT", "opt": "OPT", "slt_type": "SLT-TYPE"}
+        tree_type = tree_type_mapping.get(self.representation, "SLT")
+
+        try:
+            tuples = extract_tuples_from_mathml_direct(mathml, tree_type=tree_type)  # type: ignore
+            if not tuples:
+                return np.zeros(self.DIMENSION, dtype=np.float32)
+            encoded_sequence = encode_tuples(tuples, self._query_tokenizer)
+            if not encoded_sequence:
+                return np.zeros(self.DIMENSION, dtype=np.float32)
+            return np.array(
+                self._query_model_manager.get_sentence_vector(encoded_sequence),
+                dtype=np.float32,
+            )
+        except Exception as e:
+            logger.debug("Error embedding from MathML: %s", e)
+            return np.zeros(self.DIMENSION, dtype=np.float32)
+
     def get_representations(self) -> list[str]:
         """Return representation being indexed."""
         return [self.representation]
