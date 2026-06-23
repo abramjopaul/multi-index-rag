@@ -99,6 +99,72 @@ class RunConfig(BaseModel):
         return self.experiment_name or self.run_name
 
 
+class RerankerConfig(BaseModel):
+    """Configuration for the stage-2 formula-aware reranker."""
+
+    run_name: str = Field(..., description="Human-readable name for this reranker run")
+    stage1_run_path: str = Field(..., description="Path to stage-1 TREC run file (.tsv)")
+    alpha: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Blend weight: 0.0 = pure text, 1.0 = pure formula",
+    )
+    n_candidates: int = Field(
+        default=100,
+        ge=1,
+        description="Number of stage-1 candidates to rerank per topic",
+    )
+    aggregation: str = Field(
+        default="max",
+        description="How to aggregate per-topic-formula MaxSim scores: max | mean | sum",
+    )
+    representation: str = Field(
+        default="slt",
+        description="Formula representation for FastText embedding: slt | opt | slt_type",
+    )
+    formula_embedding_dir: str | None = Field(
+        default=None,
+        description="Directory containing trained FastText models. Defaults to data/formula-indexing",
+    )
+    experiment_name: str | None = Field(
+        default=None,
+        description="W&B experiment grouping (defaults to run_name)",
+    )
+
+    @field_validator("aggregation")
+    @classmethod
+    def _validate_aggregation(cls, v: str) -> str:
+        if v not in {"max", "mean", "sum"}:
+            raise ValueError(f"aggregation must be one of max/mean/sum, got '{v}'")
+        return v
+
+    @field_validator("representation")
+    @classmethod
+    def _validate_representation(cls, v: str) -> str:
+        if v not in {"slt", "opt", "slt_type"}:
+            raise ValueError(f"representation must be one of slt/opt/slt_type, got '{v}'")
+        return v
+
+    def get_experiment_name(self) -> str:
+        return self.experiment_name or self.run_name
+
+
+class RerankerConfigManager:
+    """Manager for loading reranker configurations from YAML."""
+
+    @staticmethod
+    def from_yaml(yaml_path: str | Path) -> RerankerConfig:
+        yaml_path = Path(yaml_path)
+        if not yaml_path.exists():
+            raise FileNotFoundError(f"Config file not found: {yaml_path}")
+        with open(yaml_path) as f:
+            config_dict = yaml.safe_load(f)
+        if config_dict is None:
+            raise ValueError(f"Empty config file: {yaml_path}")
+        return RerankerConfig(**config_dict)
+
+
 class RunConfigManager:
     """Manager for loading and saving run configurations."""
 

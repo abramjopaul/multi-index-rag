@@ -1,0 +1,26 @@
+# Stage-2 formula-aware reranker config (SLT representation, alpha=0.5)
+# Run: poetry run python experiments/rerank_run.py configs/experiments/rerank_formula_slt.yaml
+
+run_name: "rerank_formula_slt_alpha05"
+
+# Required: path to stage-1 TREC run file produced by fuse_runs.py or run_experiment.py
+stage1_run_path: null  # e.g. "data/runs/bm25_dense_rrf_20250101.tsv"
+
+# Blend weight: 0.0 = pure text ranking, 1.0 = pure formula ranking
+alpha: 0.5
+
+# Number of stage-1 candidates to rerank per topic (tail is kept in original order)
+n_candidates: 100
+
+# How to aggregate per-topic-formula MaxSim scores: "max" | "mean" | "sum"
+aggregation: "mean"
+
+# Formula representation for FastText embedding: "slt" | "opt" | "slt_type"
+representation: "slt"
+
+# Directory containing trained FastText models.
+# null = defaults to data/formula-indexing (same as FORMULA_INDEX_DIR in path_configs.py)
+formula_embedding_dir: null
+
+# W&B experiment group name
+experiment_name: "formula_rerank_sweep"
