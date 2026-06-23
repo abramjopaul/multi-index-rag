@@ -127,6 +127,15 @@ class RerankerConfig(BaseModel):
         default=None,
         description="Directory containing trained FastText models. Defaults to data/formula-indexing",
     )
+    formula_tsv_base_dir: str | None = Field(
+        default=None,
+        description=(
+            "Base dir containing slt_representation_v3/ and opt_representation_v3/ TSV subdirs. "
+            "When set, candidate formula embeddings use pre-computed MathML from these files "
+            "instead of the subprocess-based LaTeX→MathML conversion. "
+            "Defaults to data/raw/collection/formula"
+        ),
+    )
     experiment_name: str | None = Field(
         default=None,
         description="W&B experiment grouping (defaults to run_name)",

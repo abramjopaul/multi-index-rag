@@ -17,6 +17,7 @@ import os
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 import argparse
+import csv
 import json
 import logging
 import sys
@@ -24,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 import wandb
+from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -32,6 +34,7 @@ from logging_config import configure_logging
 from multirag.config import RerankerConfig, RerankerConfigManager
 from multirag.config.path_configs import (
     ANSWERS_JSONL,
+    FORMULA_DIR,
     FORMULA_INDEX_DIR,
     QREL_TASK1_2022_OFFICIAL,
     RUNS_DIR,
@@ -62,9 +65,14 @@ def _load_topics(topics_path: Path) -> list[dict]:
 def _load_answer_formulas(
     answers_path: Path,
     candidate_ids: set[str],
-) -> dict[str, list[str]]:
-    """Stream answers.jsonl and collect non-trivial formula LaTeX for candidate posts only."""
-    answer_formulas: dict[str, list[str]] = {}
+) -> dict[str, list[tuple[str, str]]]:
+    """Stream answers.jsonl and return non-trivial formulas for candidate posts.
+
+    Returns:
+        {answer_id: [(formula_id, latex), ...]} — only non-trivial formulas, only
+        for posts that appear in candidate_ids.
+    """
+    answer_formulas: dict[str, list[tuple[str, str]]] = {}
     remaining = set(candidate_ids)
     with open(answers_path) as f:
         for line in f:
@@ -82,14 +90,75 @@ def _load_answer_formulas(
                 continue
             remaining.discard(aid)
             non_trivial = [
-                f["latex"]
-                for f in answer.get("formulas", [])
-                if not _is_clearly_trivial(f["latex"])
+                (str(formula_obj.get("formula_id", "")), formula_obj["latex"])
+                for formula_obj in answer.get("formulas", [])
+                if not _is_clearly_trivial(formula_obj["latex"])
             ]
             answer_formulas[aid] = non_trivial
     if remaining:
         logger.warning("%d candidate doc_ids not found in answers.jsonl", len(remaining))
     return answer_formulas
+
+
+def _load_candidate_mathml(
+    tsv_base_dir: Path,
+    representation: str,
+    needed_fids: set[str],
+) -> dict[str, str]:
+    """Stream collection TSV shards and collect pre-computed MathML for needed formula_ids.
+
+    The TSV files have columns: id, post_id, ..., formula (pre-computed MathML).
+    We filter to rows whose `id` (formula_id) is in needed_fids.
+
+    Args:
+        tsv_base_dir: data/raw/collection/formula (contains slt_representation_v3/ etc.)
+        representation: "slt", "opt", or "slt_type" — selects the TSV subdir.
+        needed_fids: formula_ids to collect MathML for.
+
+    Returns:
+        {formula_id: mathml_str}
+    """
+    subdir_map = {
+        "slt": "slt_representation_v3",
+        "slt_type": "slt_representation_v3",  # SLT-TYPE uses SLT MathML (same PMML)
+        "opt": "opt_representation_v3",
+    }
+    subdir = tsv_base_dir / subdir_map[representation]
+    if not subdir.exists():
+        logger.warning("TSV dir not found: %s — candidate formulas will use subprocess", subdir)
+        return {}
+
+    tsv_files = sorted(subdir.glob("*.tsv"), key=lambda p: int(p.stem))
+    formula_mathml: dict[str, str] = {}
+    remaining = set(needed_fids)
+
+    csv.field_size_limit(2**31 - 1)
+
+    for tsv_file in tqdm(tsv_files, desc="Loading candidate MathML from TSV shards", unit="shard"):
+        if not remaining:
+            break
+        with open(tsv_file, newline="") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            for row in reader:
+                fid = row.get("id", "")
+                if fid not in remaining:
+                    continue
+                mathml = row.get("formula", "").strip()
+                if mathml:
+                    formula_mathml[fid] = mathml
+                remaining.discard(fid)
+
+    if remaining:
+        logger.warning(
+            "%d formula_ids not found in TSV shards — those will fall back to subprocess",
+            len(remaining),
+        )
+    logger.info(
+        "Loaded pre-computed MathML for %d/%d candidate formulas",
+        len(formula_mathml),
+        len(needed_fids),
+    )
+    return formula_mathml
 
 
 def _write_run_file(
@@ -142,7 +211,6 @@ def main() -> int:
         stage1_path = Path(config.stage1_run_path)
         logger.info("Parsing stage-1 run from %s", stage1_path)
         raw_run = _parse_run(stage1_path)
-        # Convert to sorted list format
         run: dict[str, list[tuple[str, float]]] = {
             qid: sorted(doc_scores.items(), key=lambda x: -x[1])
             for qid, doc_scores in raw_run.items()
@@ -153,21 +221,33 @@ def main() -> int:
         logger.info("Loading topics from %s", TOPICS_JSONL)
         topics = _load_topics(TOPICS_JSONL)
 
-        # Collect candidate doc_ids from stage-1 run (all topics, all ranks)
+        # Collect candidate doc_ids
         candidate_ids: set[str] = {
             doc_id for doc_scores in run.values() for doc_id, _ in doc_scores
         }
         logger.info("Collecting formula data for %d unique candidate posts", len(candidate_ids))
 
-        # Stream answers.jsonl, filtering to candidate_ids only
+        # Stream answers.jsonl → {answer_id: [(formula_id, latex), ...]}
         logger.info("Streaming %s", ANSWERS_JSONL)
-        embedding_dir = Path(config.formula_embedding_dir or str(FORMULA_INDEX_DIR))
         answer_formulas = _load_answer_formulas(ANSWERS_JSONL, candidate_ids)
         logger.info(
             "Loaded formula data for %d/%d candidate posts",
             len(answer_formulas),
             len(candidate_ids),
         )
+
+        # Collect all candidate formula_ids, then load their pre-computed MathML from TSV
+        needed_fids: set[str] = {
+            fid
+            for pairs in answer_formulas.values()
+            for fid, _ in pairs
+            if fid
+        }
+        logger.info("Loading pre-computed MathML for %d candidate formula_ids", len(needed_fids))
+        tsv_base_dir = Path(config.formula_tsv_base_dir or str(FORMULA_DIR))
+        formula_mathml = _load_candidate_mathml(tsv_base_dir, config.representation, needed_fids)
+
+        embedding_dir = Path(config.formula_embedding_dir or str(FORMULA_INDEX_DIR))
 
         # Instantiate reranker
         reranker = FormulaMaxSimReranker(
@@ -180,13 +260,13 @@ def main() -> int:
 
         # Rerank
         logger.info(
-            "Reranking with alpha=%.2f, aggregation=%s, n_candidates=%d, representation=%s",
+            "Reranking: alpha=%.2f, aggregation=%s, n_candidates=%d, representation=%s",
             config.alpha,
             config.aggregation,
             config.n_candidates,
             config.representation,
         )
-        reranked = reranker.rerank(run, topics, answer_formulas)
+        reranked = reranker.rerank(run, topics, answer_formulas, formula_mathml)
 
         # Write output run file
         out_path = RUNS_DIR / f"{run_name}.tsv"
