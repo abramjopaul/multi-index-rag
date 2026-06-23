@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from tqdm import tqdm
 
 from multirag.evaluation.metrics import _is_clearly_trivial
 
@@ -142,7 +143,7 @@ class FormulaMaxSimReranker:
         topic_by_id = {t["topic_id"]: t for t in topics}
         output: dict[str, list[tuple[str, float]]] = {}
 
-        for topic_id, ranked_docs in run.items():
+        for topic_id, ranked_docs in tqdm(run.items(), desc="Reranking topics", unit="topic"):
             topic = topic_by_id.get(topic_id)
             if topic is None:
                 logger.warning("Topic %s not found in topics.jsonl — keeping original order", topic_id)
@@ -166,7 +167,7 @@ class FormulaMaxSimReranker:
             formula_scores: list[float] = []
             doc_ids: list[str] = []
 
-            for doc_id, text_score in pool:
+            for doc_id, text_score in tqdm(pool, desc=f"  Scoring candidates [{topic_id}]", unit="doc", leave=False):
                 cand_latexes = answer_formulas.get(doc_id, [])
                 cand_vecs = self._embed_formula_set(cand_latexes)
                 text_scores.append(text_score)
