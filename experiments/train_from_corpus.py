@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from logging_config import configure_logging
+from multirag.config.path_configs import FORMULA_EMBEDDING_DIR
 from multirag.embedding.formula_trainer_direct import FormulaTrainerDirect
 
 # Configure logging
@@ -32,8 +33,10 @@ Examples:
     parser.add_argument(
         "-c", "--corpus-path",
         type=str,
-        required=True,
-        help="Path to corpus file (LineSentence format)"
+        default=None,
+        help="Path to corpus file (LineSentence format). "
+             "Defaults to FORMULA_EMBEDDING_DIR/<tree_type>/corpus_<tree_type>.txt "
+             "(resolved from path_configs.FORMULA_EMBEDDING_DIR)"
     )
     
     parser.add_argument(
@@ -69,14 +72,23 @@ Examples:
         "--output-dir",
         type=str,
         default=None,
-        help="Override output directory for model artifacts (default: data/formula-indexing). "
-             "Use e.g. data/formula-indexing/v2 to avoid overwriting existing models."
+        help="Output directory for model artifacts. "
+             "Defaults to FORMULA_EMBEDDING_DIR (from path_configs.FORMULA_MODEL_VERSION). "
+             "Override only to write to a different location than the config specifies."
     )
 
     args = parser.parse_args()
-    
-    # Validate corpus path exists
-    corpus_path = Path(args.corpus_path)
+
+    # Resolve output dir: CLI arg > FORMULA_EMBEDDING_DIR from config
+    output_dir = args.output_dir or str(FORMULA_EMBEDDING_DIR)
+
+    # Resolve corpus path: CLI arg > <output_dir>/<tree_type_suffix>/corpus_<tree_type_suffix>.txt
+    tree_type_suffix = args.tree_type.lower().replace("-", "_")
+    if args.corpus_path:
+        corpus_path = Path(args.corpus_path)
+    else:
+        corpus_path = Path(output_dir) / tree_type_suffix / f"corpus_{tree_type_suffix}.txt"
+
     if not corpus_path.exists():
         logger.error(f"✗ Corpus file not found: {corpus_path}")
         raise FileNotFoundError(f"Corpus file not found: {corpus_path}")
@@ -90,7 +102,7 @@ Examples:
     logger.info(f"Epochs: {args.epochs}")
     logger.info(f"Workers: {args.num_workers}")
     logger.info(f"Vector size: {args.vector_size}")
-    logger.info(f"Output dir: {args.output_dir if args.output_dir else 'default (data/formula-indexing)'}")
+    logger.info(f"Output dir: {output_dir}")
     logger.info("=" * 70 + "\n")
     
     # Start training
@@ -103,7 +115,7 @@ Examples:
             num_workers=args.num_workers,
             vector_size=args.vector_size,
             epochs=args.epochs,
-            output_dir=args.output_dir,
+            output_dir=output_dir,
         )
         
         logger.info("Starting corpus-based training (memory-efficient streaming)...")
