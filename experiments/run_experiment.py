@@ -39,8 +39,8 @@ from multirag.config.path_configs import (
     ANSWERS_JSONL,
     DENSE_INDEX_PATH,
     FORMULA_DIR,
+    FORMULA_EMBEDDING_DIR,
     FORMULA_FAISS_INDEX_DIR,
-    FORMULA_INDEX_DIR,
     QREL_TASK1_2022_OFFICIAL,
     RUNS_DIR,
     SPARSE_INDEX_PATH,
@@ -124,7 +124,7 @@ def create_indexer(
         index_path = config.formula_index_path or str(
             FORMULA_FAISS_INDEX_DIR / f"sq_{representation}"
         )
-        embedding_dir = config.formula_embedding_dir or str(FORMULA_INDEX_DIR)
+        embedding_dir = config.formula_embedding_dir or str(FORMULA_EMBEDDING_DIR)
         tsv_base_dir = config.formula_tsv_base_dir or str(FORMULA_DIR)
 
         logger.info(

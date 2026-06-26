@@ -18,6 +18,7 @@ from tqdm import tqdm
 # Add src to path to import from multirag
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from multirag.config.path_configs import FORMULA_EMBEDDING_DIR
 from multirag.embedding.formula_trainer import (
     OPTGenerator,
     SLTGenerator,
@@ -497,7 +498,7 @@ def main():
     # Paths (relative to workspace root)
     datasets_dir = Path("data/golden/datasets")
     results_dir = Path("data/golden/results")
-    model_dir = Path("data/formula-indexing")
+    model_dir = FORMULA_EMBEDDING_DIR
 
     # Check if datasets directory exists
     if not datasets_dir.exists():
