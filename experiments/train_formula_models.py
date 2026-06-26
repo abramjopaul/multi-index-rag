@@ -125,8 +125,8 @@ Examples:
     parser.add_argument(
         "--vector-size",
         type=int,
-        default=300,
-        help="FastText vector dimension (default: 300)"
+        default=150,
+        help="FastText vector dimension (default: 150)"
     )
 
     parser.add_argument(

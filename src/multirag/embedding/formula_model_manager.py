@@ -96,7 +96,7 @@ class FastTextModelManager:
         model_path: str,
         metadata_path: str,
         corpus_path: str,
-        vector_size: int = 300,
+        vector_size: int = 150,
         window: int = 5,
         min_n: int = 10,
         max_n: int = 10,
@@ -180,7 +180,9 @@ class FastTextModelManager:
         if not path_exists(str(self.corpus_path)):
             raise FileNotFoundError(f"Corpus file not found: {self.corpus_path}")
 
-        # Create and train model
+        # Create and train model.
+        # bucket=0: character n-grams are disabled (min_n > max token length), so the
+        # default 2M-bucket n-gram matrix would waste ~bucket*vector_size*4 bytes for nothing.
         self.model = FastText(
             corpus_file=str(self.corpus_path),
             vector_size=self.vector_size,
@@ -190,6 +192,7 @@ class FastTextModelManager:
             negative=self.negative,
             min_n=self.min_n,
             max_n=self.max_n,
+            bucket=0,
             sg=self.sg,
             hs=self.hs,
             word_ngrams=self.word_ngrams,

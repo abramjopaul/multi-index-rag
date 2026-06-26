@@ -273,7 +273,7 @@ class FormulaTrainerDirect:
         self,
         tree_type: Literal["SLT", "OPT", "SLT-TYPE"] = "SLT",
         embedding_type: Optional[TupleTokenizationMode] = None,
-        vector_size: int = 300,
+        vector_size: int = 150,
         window: int = 5,
         min_n: int = 10,
         max_n: int = 10,
