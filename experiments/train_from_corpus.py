@@ -64,7 +64,15 @@ Examples:
         default=300,
         help="FastText vector dimension (default: 300)"
     )
-    
+
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Override output directory for model artifacts (default: data/formula-indexing). "
+             "Use e.g. data/formula-indexing/v2 to avoid overwriting existing models."
+    )
+
     args = parser.parse_args()
     
     # Validate corpus path exists
@@ -82,6 +90,7 @@ Examples:
     logger.info(f"Epochs: {args.epochs}")
     logger.info(f"Workers: {args.num_workers}")
     logger.info(f"Vector size: {args.vector_size}")
+    logger.info(f"Output dir: {args.output_dir if args.output_dir else 'default (data/formula-indexing)'}")
     logger.info("=" * 70 + "\n")
     
     # Start training
@@ -94,6 +103,7 @@ Examples:
             num_workers=args.num_workers,
             vector_size=args.vector_size,
             epochs=args.epochs,
+            output_dir=args.output_dir,
         )
         
         logger.info("Starting corpus-based training (memory-efficient streaming)...")

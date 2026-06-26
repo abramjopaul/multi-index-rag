@@ -35,7 +35,7 @@ from multirag.config import RerankerConfig, RerankerConfigManager
 from multirag.config.path_configs import (
     ANSWERS_JSONL,
     FORMULA_DIR,
-    FORMULA_INDEX_DIR,
+    FORMULA_EMBEDDING_DIR,
     QREL_TASK1_2022_OFFICIAL,
     RUNS_DIR,
     TOPICS_JSONL,
@@ -251,7 +251,7 @@ def main() -> int:
         tsv_base_dir = Path(config.formula_tsv_base_dir or str(FORMULA_DIR))
         formula_mathml = _load_candidate_mathml(tsv_base_dir, config.representation, needed_fids)
 
-        embedding_dir = Path(config.formula_embedding_dir or str(FORMULA_INDEX_DIR))
+        embedding_dir = Path(config.formula_embedding_dir or str(FORMULA_EMBEDDING_DIR))
 
         # Instantiate reranker
         reranker = FormulaMaxSimReranker(

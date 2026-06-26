@@ -61,6 +61,12 @@ FORMULA_FAISS_INDEX_DIR = INDEX_DIR / "formula"
 FORMULA_INDEX_DIR = DATA_DIR / "formula-indexing"
 FASTTEXT_MODEL_DIR = FORMULA_INDEX_DIR / "fasttext"
 
+# Model version — change this single variable to switch between trained model versions.
+# None  → original models at  data/formula-indexing/slt/, data/formula-indexing/opt/, ...
+# "v2"  → retrained models at data/formula-indexing/v2/slt/, data/formula-indexing/v2/opt/, ...
+FORMULA_MODEL_VERSION: str | None = None
+FORMULA_EMBEDDING_DIR = FORMULA_INDEX_DIR / FORMULA_MODEL_VERSION if FORMULA_MODEL_VERSION else FORMULA_INDEX_DIR
+
 # Formula preprocessing paths
 FORMULA_CORPUS_CSV = DATA_PROCESSED / "formula_corpus.csv"
 FORMULA_TSV = COLLECTION_PROCESSED / "formulas.tsv"

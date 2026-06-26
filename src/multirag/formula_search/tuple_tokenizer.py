@@ -207,6 +207,12 @@ class TupleTokenizer:
             token_id = self.manager.get_or_assign_id(edge_char, is_node=False)
             encoded.append(chr(token_id))
 
+        # Tokenize location / second edge (parts[3]) — mirrors TangentCFT encoder_tuple_level.py
+        if len(parts) > 3:
+            for edge_char in parts[3]:
+                token_id = self.manager.get_or_assign_id(edge_char, is_node=False)
+                encoded.append(chr(token_id))
+
         return "".join(encoded)
 
     def encode_batch(self, tuples: List[str]) -> List[str]:

@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from multirag.config.path_configs import (
     ANSWERS_JSONL,
     FORMULA_DIR,
-    FORMULA_INDEX_DIR,
+    FORMULA_EMBEDDING_DIR,
     TOPICS_JSONL,
 )
 from multirag.evaluation.metrics import _is_clearly_trivial, _parse_run
@@ -310,7 +310,7 @@ def main():
 
     # ---- Load FastText model and build tokenizer ----
     print(f"\nLoading FastText model ({representation})...")
-    embedding_dir = FORMULA_INDEX_DIR
+    embedding_dir = FORMULA_EMBEDDING_DIR
     tokenizer, tree_type, training_node_map, training_edge_map = build_tokenizer(embedding_dir, representation)
     print(f"  Training vocabulary: {len(training_node_map)} node types, {len(training_edge_map)} edge types")
     print(f"  ({len(training_node_map) + len(training_edge_map)} total tokens in encoder maps)")

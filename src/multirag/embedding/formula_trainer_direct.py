@@ -275,8 +275,8 @@ class FormulaTrainerDirect:
         embedding_type: Optional[TupleTokenizationMode] = None,
         vector_size: int = 300,
         window: int = 5,
-        min_n: int = 3,
-        max_n: int = 6,
+        min_n: int = 10,
+        max_n: int = 10,
         negative: int = 20,
         sg: int = 1,
         hs: int = 0,
@@ -352,7 +352,7 @@ class FormulaTrainerDirect:
         self.num_workers = num_workers
 
         # Setup output directories
-        self.output_dir = FORMULA_INDEX_DIR
+        self.output_dir = Path(output_dir) if output_dir else FORMULA_INDEX_DIR
         makedirs(str(self.output_dir), exist_ok=True)
 
         # Artifact paths (use lowercase tree_type with hyphens replaced by underscores)
