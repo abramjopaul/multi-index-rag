@@ -30,6 +30,11 @@ QRELS_DIR = DATA_RAW / "qrels"
 QREL_TASK1_2022_ADDITIONAL = QRELS_DIR / "qrel_task1_2022_additional.tsv"
 QREL_TASK1_2022_ALL = QRELS_DIR / "qrel_task1_2022_all.tsv"
 QREL_TASK1_2022_OFFICIAL = QRELS_DIR / "qrel_task1_2022_official.tsv"
+QREL_TASK2_2021_ALL = QRELS_DIR / "qrel_task2_2021_all.tsv"
+QREL_TASK2_2022_OFFICIAL = QRELS_DIR / "qrel_task2_2022_official.tsv"
+
+# Task 2 topics XML
+TOPICS_TASK2_XML = DATA_RAW / "topics" / "Topics_Task2_2022_V0.1.xml"
 
 # Experiments paths
 EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
@@ -60,6 +65,9 @@ FORMULA_FAISS_INDEX_DIR = INDEX_DIR / "formula"
 # Formula embedding / FastText model paths
 FORMULA_INDEX_DIR = DATA_DIR / "formula-indexing"
 FASTTEXT_MODEL_DIR = FORMULA_INDEX_DIR / "fasttext"
+# Full-collection formula FAISS index (Task 2) — all post types, visual_id keyed
+# Lives under data/indices/formula/ alongside other FAISS indices (not formula-indexing/)
+COLLECTION_FORMULA_INDEX_DIR = FORMULA_FAISS_INDEX_DIR / "collection"
 
 # Model version — change this single variable to switch between trained model versions.
 # None  → original models at  data/formula-indexing/slt/, data/formula-indexing/opt/, ...
