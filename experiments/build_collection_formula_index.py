@@ -26,6 +26,9 @@ import logging
 import sys
 from pathlib import Path
 
+# MathML in TSV cells can exceed the default 131 KB csv field limit
+csv.field_size_limit(sys.maxsize)
+
 import faiss
 import numpy as np
 from tqdm import tqdm
