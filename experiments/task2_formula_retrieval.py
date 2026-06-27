@@ -117,7 +117,7 @@ def build_visual_id_map(representation: str) -> tuple[dict[str, str], dict[str, 
     Memory: ~224 MB for 28M entries (both maps combined).
     """
     import csv, sys as _sys
-    csv.field_size_limit(_sys.maxsize)
+    csv.field_size_limit(_sys.maxsize)  # MathML cells can exceed the 131 KB default
 
     suffix = representation.lower().replace("-", "_")
     tsv_dir = SLT_REPRESENTATION if suffix in ("slt", "slt_type") else OPT_REPRESENTATION
