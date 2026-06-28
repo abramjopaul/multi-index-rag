@@ -291,9 +291,10 @@ def retrieve(
     distances, indices = faiss_index.search(query_vec.reshape(1, -1), n)
     hits = []
     for dist, idx in zip(distances[0], indices[0]):
-        if idx < 0 or idx not in id_map:
+        idx_int = int(idx)
+        if idx_int < 0 or idx_int not in id_map:
             continue
-        post_id, formula_id = id_map[idx]
+        post_id, formula_id = id_map[idx_int]
         if metric in ("cosine", "cosine_ms"):
             score = float(1.0 - dist / 2.0)   # cosine = 1 - L2^2/2 for unit vectors
         else:  # l2
