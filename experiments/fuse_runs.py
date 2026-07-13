@@ -2,30 +2,13 @@
 """
 TREC Run Fusion Script — Fuse multiple TREC run files using RRF, CombSUM, and CombMNZ.
 
-Usage:
+YAML-driven (recommended):
+    poetry run python experiments/fuse_runs.py configs/task1/fuse_bm25_dense_slt.yaml
+    poetry run python experiments/fuse_runs.py configs/task1/fuse_bm25_dense_slt.yaml --dry-run
+
+CLI (ad-hoc):
     poetry run python experiments/fuse_runs.py <run1.tsv> <run2.tsv> [run3.tsv ...] \
-        [--output-dir OUTDIR] [--techniques TECH1,TECH2,...] [--rrf-k K] [--top-k K] [--dry-run]
-
-Example:
-    poetry run python experiments/fuse_runs.py \
-        data/runs/bm25_baseline.tsv \
-        data/runs/dense_mpnet_20260611.tsv \
-        data/runs/dense_mpnet_20260612.tsv \
-        --output-dir experiments/runs/ \
-        --techniques rrf,combsum,combmnz
-
-With W&B logging:
-    poetry run python experiments/fuse_runs.py \
-        data/runs/bm25_baseline.tsv \
-        data/runs/dense_mpnet_20260611.tsv \
-        data/runs/dense_mpnet_20260612.tsv
-
-Dry-run (skip W&B):
-    poetry run python experiments/fuse_runs.py \
-        data/runs/bm25_baseline.tsv \
-        data/runs/dense_mpnet_20260611.tsv \
-        data/runs/dense_mpnet_20260612.tsv \
-        --dry-run
+        [--output-dir OUTDIR] [--techniques rrf,combsum,combmnz] [--rrf-k K] [--top-k K]
 """
 
 import argparse
@@ -43,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import wandb
 
+from multirag.config.run_config import FuseConfig, FuseConfigManager
 from multirag.evaluation.metrics import _parse_qrels, _parse_run, evaluate_run
 
 # Configure logging
@@ -328,32 +312,32 @@ def main():
         parser.add_argument(
             "run_files",
             nargs="+",
-            type=Path,
-            help="Input TREC run file paths (minimum 2 files)",
+            type=str,
+            help="YAML config path OR two or more input TREC run file paths",
         )
         parser.add_argument(
             "--output-dir",
             type=Path,
-            default=Path("experiments/runs"),
-            help="Output directory for fused TREC files (default: experiments/runs)",
+            default=None,
+            help="Output directory for fused TREC files (overrides YAML; default: data/runs)",
         )
         parser.add_argument(
             "--techniques",
             type=str,
-            default="rrf,combsum,combmnz",
-            help="Comma-separated fusion techniques to apply (default: rrf,combsum,combmnz)",
+            default=None,
+            help="Comma-separated fusion techniques (overrides YAML; default: rrf,combsum,combmnz)",
         )
         parser.add_argument(
             "--rrf-k",
             type=int,
-            default=60,
-            help="RRF constant K (default: 60)",
+            default=None,
+            help="RRF constant K (overrides YAML; default: 60)",
         )
         parser.add_argument(
             "--top-k",
             type=int,
             default=None,
-            help="Number of top results per query to keep (default: None = keep all)",
+            help="Results per query to keep (overrides YAML; default: 1000)",
         )
         parser.add_argument(
             "--dry-run",
@@ -363,47 +347,55 @@ def main():
 
         args = parser.parse_args()
 
-        # Validate input
-        if len(args.run_files) < 2:
-            logger.error("Minimum 2 run files required for fusion.")
-            sys.exit(1)
+        # Detect YAML config vs bare run files
+        if len(args.run_files) == 1 and args.run_files[0].endswith(".yaml"):
+            cfg = FuseConfigManager.from_yaml(args.run_files[0])
+            # CLI flags override YAML when explicitly provided
+            if args.output_dir is not None:
+                cfg = cfg.model_copy(update={"output_dir": str(args.output_dir)})
+            if args.techniques is not None:
+                cfg = cfg.model_copy(update={"techniques": args.techniques})
+            if args.rrf_k is not None:
+                cfg = cfg.model_copy(update={"rrf_k": args.rrf_k})
+            if args.top_k is not None:
+                cfg = cfg.model_copy(update={"top_k": args.top_k})
+            run_name = f"{cfg.run_name}_{datetime.now().strftime('%Y%m%d')}"
+        else:
+            if len(args.run_files) < 2:
+                logger.error("Minimum 2 run files required for fusion (or pass a single .yaml config).")
+                sys.exit(1)
+            cfg = FuseConfig(
+                run_name=f"fusion_{len(args.run_files)}runs",
+                run_files=args.run_files,
+                techniques=args.techniques or "rrf,combsum,combmnz",
+                rrf_k=args.rrf_k or 60,
+                top_k=args.top_k,
+                output_dir=str(args.output_dir or "data/runs"),
+            )
+            run_name = f"{cfg.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-        run_paths = [Path(p).resolve() for p in args.run_files]
+        run_paths = [Path(p).resolve() for p in cfg.run_files]
         validate_run_files(run_paths)
 
-        # Check qrels exists
         qrels_path = Path(QRELS_PATH).resolve()
         if not qrels_path.exists():
             logger.error(f"Qrels file not found at {qrels_path}")
             sys.exit(1)
 
-        output_dir = args.output_dir.resolve()
+        output_dir = Path(cfg.output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        techniques = [t.strip().lower() for t in args.techniques.split(",")]
-        valid_techniques = {"rrf", "combsum", "combmnz"}
-        for tech in techniques:
-            if tech not in valid_techniques:
-                logger.error(f"Unknown technique '{tech}'. Valid: {valid_techniques}")
-                sys.exit(1)
-
-        # Generate run name from input files
-        run_name = f"fusion_{len(run_paths)}runs_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        techniques = [t.strip().lower() for t in cfg.techniques.split(",")]
 
         # Initialize W&B (unless dry-run)
         if not args.dry_run:
             logger.info("Initializing Weights & Biases...")
             wandb.init(
-                project="multi-index-rag",
+                project="one-last-run",
                 name=run_name,
-                group="fusion",
+                group="B:task 1",
                 tags=techniques,
-                config={
-                    "input_runs": [str(p) for p in run_paths],
-                    "rrf_k": args.rrf_k,
-                    "top_k": args.top_k,
-                    "techniques": techniques,
-                },
+                config=cfg.model_dump(),
             )
             logger.info(f"W&B initialized: {wandb.run.url}")  # type: ignore
         else:
@@ -441,23 +433,23 @@ def main():
         fusion_results: dict[str, dict[str, list[tuple[str, float]]]] = {}
 
         if "rrf" in techniques:
-            logger.info(f"  • RRF (k={args.rrf_k})...")
-            fusion_results["rrf"] = fuse_rrf(runs, run_names, k=args.rrf_k, top_k=args.top_k)
+            logger.info(f"  • RRF (k={cfg.rrf_k})...")
+            fusion_results["rrf"] = fuse_rrf(runs, run_names, k=cfg.rrf_k, top_k=cfg.top_k)
 
         if "combsum" in techniques:
             logger.info(f"  • CombSUM...")
-            fusion_results["combsum"] = fuse_combsum(runs, run_names, top_k=args.top_k)
+            fusion_results["combsum"] = fuse_combsum(runs, run_names, top_k=cfg.top_k)
 
         if "combmnz" in techniques:
             logger.info(f"  • CombMNZ...")
-            fusion_results["combmnz"] = fuse_combmnz(runs, run_names, top_k=args.top_k)
+            fusion_results["combmnz"] = fuse_combmnz(runs, run_names, top_k=cfg.top_k)
 
         # Write fused TREC files
         logger.info(f"\nWriting fused TREC files...")
         written_files: dict[str, Path] = {}
         for technique, results in fusion_results.items():
-            output_path = output_dir / f"fused_{technique}.tsv"
-            write_trec_run(results, output_path, f"fused_{technique}")
+            output_path = output_dir / f"{run_name}_{technique}.tsv"
+            write_trec_run(results, output_path, f"{run_name}_{technique}")
             written_files[technique] = output_path
             total_docs = sum(len(docs) for docs in results.values())
             logger.info(f"  ✓ {output_path.name}: {len(results)} queries, {total_docs} docs")
@@ -577,8 +569,8 @@ def main():
                 "qrels_path": str(qrels_path),
                 "output_dir": str(output_dir),
                 "parameters": {
-                    "rrf_k": args.rrf_k,
-                    "top_k": args.top_k,
+                    "rrf_k": cfg.rrf_k,
+                    "top_k": cfg.top_k,
                 },
             },
             "evaluation_results": {

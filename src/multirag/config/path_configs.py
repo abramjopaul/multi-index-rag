@@ -35,6 +35,7 @@ QREL_TASK2_2022_OFFICIAL = QRELS_DIR / "qrel_task2_2022_official.tsv"
 
 # Task 2 topics XML
 TOPICS_TASK2_XML = DATA_RAW / "topics" / "Topics_Task2_2022_V0.1.xml"
+TOPICS_TASK2_2021_XML = DATA_RAW / "topics" / "Topics_Task2_2021_V1.1.xml"
 
 # Experiments paths
 EXPERIMENTS_DIR = PROJECT_ROOT / "experiments"
@@ -62,18 +63,18 @@ SPARSE_INDEX_PATH = INDEX_DIR / "sparse_bm25"
 DENSE_INDEX_PATH = INDEX_DIR / "dense"
 FORMULA_FAISS_INDEX_DIR = INDEX_DIR / "formula"
 
-# Formula embedding / FastText model paths
-FORMULA_INDEX_DIR = DATA_DIR / "formula-indexing"
-FASTTEXT_MODEL_DIR = FORMULA_INDEX_DIR / "fasttext"
-# Full-collection formula FAISS index (Task 2) — all post types, visual_id keyed
-# Lives under data/indices/formula/ alongside other FAISS indices (not formula-indexing/)
-COLLECTION_FORMULA_INDEX_DIR = FORMULA_FAISS_INDEX_DIR / "collection"
+# Formula FAISS index sub-directories
+ANSWER_FORMULA_INDEX_DIR = FORMULA_FAISS_INDEX_DIR / "answer"      # Task 1: answers.jsonl-based
+COLLECTION_FORMULA_INDEX_DIR = FORMULA_FAISS_INDEX_DIR / "collection"  # Task 2: full-collection, versioned as collection/{v1,v2}/{repr}/
 
-# Model version — change this single variable to switch between trained model versions.
-# None  → original models at  data/formula-indexing/slt/, data/formula-indexing/opt/, ...
-# "v2"  → retrained models at data/formula-indexing/v2/slt/, data/formula-indexing/v2/opt/, ...
-FORMULA_MODEL_VERSION: str | None = None
-FORMULA_EMBEDDING_DIR = FORMULA_INDEX_DIR / FORMULA_MODEL_VERSION if FORMULA_MODEL_VERSION else FORMULA_INDEX_DIR
+# FastText model directories (formerly data/formula-indexing/)
+MODELS_DIR = DATA_DIR / "models"
+FASTTEXT_MODELS_V1_DIR = MODELS_DIR / "v1"   # original models: n-grams, 300-dim
+FASTTEXT_MODELS_V2_DIR = MODELS_DIR / "v2"   # retrained: no n-grams, 150-dim
+
+# Active model version — change to "v2" to switch globally
+FORMULA_MODEL_VERSION: str = "v1"
+FORMULA_EMBEDDING_DIR = MODELS_DIR / FORMULA_MODEL_VERSION
 
 # Formula preprocessing paths
 FORMULA_CORPUS_CSV = DATA_PROCESSED / "formula_corpus.csv"
@@ -83,4 +84,8 @@ FORMULA_TSV = COLLECTION_PROCESSED / "formulas.tsv"
 CONFIGS_DIR = PROJECT_ROOT / "configs"
 EXPERIMENTS_CONFIG_DIR = CONFIGS_DIR / "experiments"
 PROMPTS_CONFIG_DIR = CONFIGS_DIR / "prompts"
+TASK_C_CONFIG_DIR = CONFIGS_DIR / "task_c"
 FORMULA_CONFIG_PATH = CONFIGS_DIR / "formula_indexing.yaml"
+
+# Track C: generation + RAGAS evaluation outputs
+TASK_C_RUNS_DIR = RUNS_DIR / "task_c"

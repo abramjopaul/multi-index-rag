@@ -8,6 +8,8 @@ from multirag.config.run_config import (
     RerankerConfigManager,
     RunConfig,
     RunConfigManager,
+    Task2Config,
+    Task2ConfigManager,
 )
 
 __all__ = [
@@ -16,4 +18,6 @@ __all__ = [
     "RerankerConfigManager",
     "RunConfig",
     "RunConfigManager",
+    "Task2Config",
+    "Task2ConfigManager",
 ]

@@ -1,0 +1,6 @@
+run_name: "task2_slt_v1"
+representation: "slt"
+model_version: "v1"
+n: 2000
+force_rebuild: false
+experiment_name: "Task 2 Formula Retrieval"

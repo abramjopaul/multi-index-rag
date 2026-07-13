@@ -1,0 +1,7 @@
+run_name: "formula_v1_slt_n2000_2021"
+representation: "slt"
+model_version: "v1"
+n: 2000
+year: "2021"
+force_rebuild: false
+experiment_name: "A3 SLT+OPT Fusion"

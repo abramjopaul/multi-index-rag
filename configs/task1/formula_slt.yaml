@@ -1,0 +1,8 @@
+run_name: "formula_v1_slt"
+index_type: "formula"
+formula_representation: "slt"
+num_hits: 1000
+formula_embedding_dir: "data/models/v1"
+formula_index_path: "data/indices/formula/answer/slt"
+formula_tsv_base_dir: "data/raw/collection/formula"
+force_rebuild: true

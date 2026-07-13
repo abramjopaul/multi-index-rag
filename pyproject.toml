@@ -19,7 +19,7 @@ pytrec_eval_terrier = ">=0.5"
 wandb = ">=0.15.0"
 # GPU users: pip uninstall faiss-cpu && pip install faiss-gpu (mutual exclusion — cannot coexist)
 sentence-transformers = "^5.3.0"
-transformers = "~4.41"
+transformers = ">=4.45"
 orjson = "^3.11.7"
 gcloud = "^0.18.3"
 gensim = ">=4.3.0"
@@ -28,6 +28,15 @@ matplotlib = ">=3.10.0"
 torch = ">=2.0.0"
 gcsfs = "^2026.5.0"
 gsutil = "^5.37"
+# Track C: generation + RAGAS evaluation
+vllm = ">=0.6.0"
+ragas = ">=0.2.0"
+langchain-google-genai = ">=1.0"
+langchain-huggingface = ">=0.1"
+google-generativeai = ">=0.7"
+datasets = ">=2.0"
+nltk = ">=3.8"
+accelerate = ">=0.30"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

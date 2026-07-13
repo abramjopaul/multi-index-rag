@@ -15,7 +15,6 @@ Pipeline (per topic):
 
 Ablations:
   --representation slt | opt | slt_type | slt,opt | slt,opt,slt_type  (RRF if comma-list)
-  --metric cosine | cosine_ms | l2
   --n 5000  (retrieval depth before collapse)
   --rrf-k 60
 
@@ -24,10 +23,10 @@ Usage:
   python experiments/task2_formula_retrieval.py --representation slt --smoke-test
 
   # Full run, SLT with mean-shift cosine:
-  python experiments/task2_formula_retrieval.py --representation slt --metric cosine_ms
+  python experiments/task2_formula_retrieval.py --representation slt
 
   # RRF fusion (TangentCFT2 analogue):
-  python experiments/task2_formula_retrieval.py --representation slt,opt --metric cosine_ms
+  python experiments/task2_formula_retrieval.py --representation slt,opt
 
   # Score against 2021 qrels (for tuning):
   python experiments/task2_formula_retrieval.py --representation slt \\
@@ -54,6 +53,7 @@ from logging_config import configure_logging
 from multirag.config.path_configs import (
     COLLECTION_FORMULA_INDEX_DIR,
     FORMULA_EMBEDDING_DIR,
+    MODELS_DIR,
     OPT_REPRESENTATION,
     QREL_TASK2_2022_OFFICIAL,
     SLT_REPRESENTATION,
@@ -180,13 +180,17 @@ def load_model_and_tokenizer(
     embedding_type = embedding_type_map.get(embedding_type_name, TupleTokenizationMode.Both_Separated)
 
     encoder_maps_path = meta.get("encoder_maps_path")
+    if not encoder_maps_path or not Path(encoder_maps_path).exists():
+        candidate = embedding_dir / suffix / f"encoder_maps_{suffix}.tsv"
+        if candidate.exists():
+            encoder_maps_path = str(candidate)
     if encoder_maps_path and Path(encoder_maps_path).exists():
         node_map, edge_map = load_maps(encoder_maps_path)
         node_id = max(node_map.values(), default=60000) + 1
         edge_id = max(edge_map.values(), default=500) + 1
         tim = TokenIDManager(node_id=node_id, edge_id=edge_id, node_map=node_map, edge_map=edge_map)
     else:
-        logger.warning("Encoder maps not found")
+        logger.warning("Encoder maps not found — token IDs will not match training vocabulary")
         tim = TokenIDManager()
 
     tokenizer = TupleTokenizer(
@@ -211,10 +215,12 @@ def embed_query(
     mm: FastTextModelManager,
     tokenizer: TupleTokenizer,
     tree_type: str,
-    metric: str,
     vocab_mean: np.ndarray,
 ) -> np.ndarray | None:
-    """Embed a LaTeX query formula and prepare the vector for the chosen metric."""
+    """Embed a LaTeX query as a mean-shifted, L2-normalised vector (cosine_ms).
+
+    Matches the preprocessing applied during index building.
+    """
     try:
         if tree_type == "OPT":
             mathml = LatexToMathML.convert_to_mathml2(latex)
@@ -236,18 +242,11 @@ def embed_query(
         if not np.any(vec):
             return None
 
-        if metric == "cosine_ms":
-            vec = vec - vocab_mean
-
-        if metric in ("cosine", "cosine_ms"):
-            norm = np.linalg.norm(vec)
-            if norm < 1e-9:
-                return None
-            vec = vec / norm
-
-        # For l2: keep un-normalised vector (use raw L2 distance in embedding space)
-
-        return vec
+        vec = vec - vocab_mean
+        norm = np.linalg.norm(vec)
+        if norm < 1e-9:
+            return None
+        return vec / norm
 
     except Exception as e:
         logger.debug(f"Embedding failed for '{latex[:40]}': {e}")
@@ -258,15 +257,16 @@ def embed_query(
 # Step 4 — FAISS index loading + retrieval
 # ---------------------------------------------------------------------------
 
-def load_faiss_index(representation: str) -> tuple[faiss.Index, dict[int, list]]:
-    index_dir = COLLECTION_FORMULA_INDEX_DIR / representation
+def load_faiss_index(representation: str, model_version: str = "v1") -> tuple[faiss.Index, dict[int, list]]:
+    index_dir = COLLECTION_FORMULA_INDEX_DIR / model_version / representation
     index_file = index_dir / f"formula_index_sq_{representation}.faiss"
     id_map_file = index_dir / f"id_map_sq_{representation}.json"
 
     if not index_file.exists():
         raise FileNotFoundError(
             f"Collection FAISS index not found: {index_file}\n"
-            f"Run: python experiments/build_collection_formula_index.py --representation {representation}"
+            f"Run: python experiments/build_collection_formula_index.py "
+            f"--representation {representation} --model-version {model_version}"
         )
 
     logger.info(f"Loading FAISS index: {index_file}")
@@ -285,9 +285,11 @@ def retrieve(
     faiss_index: faiss.Index,
     id_map: dict[int, list],
     n: int,
-    metric: str,
 ) -> list[tuple[str, str, float]]:
-    """Return up to n hits as [(post_id, formula_id, score)]."""
+    """Return up to n hits as [(post_id, formula_id, score)].
+
+    Vectors are L2-normalised (cosine_ms), so FAISS squared-L2 d → cosine = 1 - d/2.
+    """
     distances, indices = faiss_index.search(query_vec.reshape(1, -1), n)
     hits = []
     for dist, idx in zip(distances[0], indices[0]):
@@ -295,11 +297,7 @@ def retrieve(
         if idx_int < 0 or idx_int not in id_map:
             continue
         post_id, formula_id = id_map[idx_int]
-        if metric in ("cosine", "cosine_ms"):
-            score = float(1.0 - dist / 2.0)   # cosine = 1 - L2^2/2 for unit vectors
-        else:  # l2
-            score = float(-dist)               # higher (less negative) = more similar
-        hits.append((post_id, formula_id, score))
+        hits.append((post_id, formula_id, float(1.0 - dist / 2.0)))
     return hits
 
 
@@ -374,7 +372,7 @@ def score_run(run_path: Path, qrels_path: Path) -> dict[str, float]:
     return evaluate_run(
         qrels_path=str(qrels_path),
         run_path=str(run_path),
-        relevance_level=2,
+
     )
 
 
@@ -385,9 +383,9 @@ def score_run(run_path: Path, qrels_path: Path) -> dict[str, float]:
 def run_single_representation(
     topics: list[dict],
     representation: str,
-    metric: str,
     n: int,
     embedding_dir: Path,
+    model_version: str = "v1",
 ) -> dict[str, list[tuple[str, float]]]:
     """Embed queries, retrieve, exclude, collapse for one representation.
 
@@ -397,25 +395,25 @@ def run_single_representation(
 
     logger.info(f"[{suffix}] Loading model and FAISS index...")
     mm, tokenizer, tree_type, dim, vocab_mean = load_model_and_tokenizer(suffix, embedding_dir)
-    faiss_index, id_map = load_faiss_index(suffix)
+    faiss_index, id_map = load_faiss_index(suffix, model_version)
 
     logger.info(f"[{suffix}] Building visual_id map...")
     fid_to_vid, fid_to_post = build_visual_id_map(suffix)
 
     results: dict[str, list[tuple[str, float]]] = {}
 
-    for topic in tqdm(topics, desc=f"Retrieving [{suffix}/{metric}]"):
+    for topic in tqdm(topics, desc=f"Retrieving [{suffix}]"):
         tid = topic["topic_id"]
 
         query_vec = embed_query(
-            topic["query_latex"], mm, tokenizer, tree_type, metric, vocab_mean
+            topic["query_latex"], mm, tokenizer, tree_type, vocab_mean
         )
         if query_vec is None:
             logger.warning(f"[{tid}] Failed to embed query: {topic['query_latex'][:50]}")
             results[tid] = []
             continue
 
-        hits = retrieve(query_vec, faiss_index, id_map, n, metric)
+        hits = retrieve(query_vec, faiss_index, id_map, n)
 
         # Determine query visual_id for exclusion (look up from fid_to_vid if possible)
         query_vid = fid_to_vid.get(topic.get("source_formula_id", ""))
@@ -461,6 +459,91 @@ def rrf_fuse(
 
 
 # ---------------------------------------------------------------------------
+# Pre-collapse fusion (A3 path) — instance-level RRF
+# ---------------------------------------------------------------------------
+
+def retrieve_instances(
+    topics: list[dict],
+    representation: str,
+    n: int,
+    embedding_dir: Path,
+    model_version: str = "v1",
+) -> dict[str, list[tuple[str, str, float]]]:
+    """Embed queries and retrieve raw formula instances for one channel.
+
+    Returns {topic_id: [(post_id, formula_id, score)]} — NO collapse.
+    Reuses load_model_and_tokenizer, load_faiss_index, embed_query, retrieve.
+    """
+    suffix = representation.lower().replace("-", "_")
+    logger.info(f"[{suffix}] Loading model and FAISS index (instance retrieval)...")
+    mm, tokenizer, tree_type, dim, vocab_mean = load_model_and_tokenizer(suffix, embedding_dir)
+    faiss_index, id_map = load_faiss_index(suffix, model_version)
+
+    results: dict[str, list[tuple[str, str, float]]] = {}
+    for topic in tqdm(topics, desc=f"Retrieving instances [{suffix}]"):
+        tid = topic["topic_id"]
+        query_vec = embed_query(topic["query_latex"], mm, tokenizer, tree_type, vocab_mean)
+        if query_vec is None:
+            logger.warning(f"[{tid}] Failed to embed query: {topic['query_latex'][:50]}")
+            results[tid] = []
+            continue
+        results[tid] = retrieve(query_vec, faiss_index, id_map, n)
+
+    return results
+
+
+def rrf_fuse_instances(
+    channel_results: list[dict[str, list[tuple[str, str, float]]]],
+    rrf_k: int,
+    weights: list[float] | None = None,
+) -> tuple[dict[str, list[tuple[str, str, float]]], dict[str, float]]:
+    """Fuse per-channel raw instance lists with (optionally weighted) RRF.
+
+    Uses formula_id as the document key (consistent across SLT/OPT TSVs).
+    Returns:
+      fused:   {topic_id: [(post_id, formula_id, rrf_score)]} sorted descending
+      overlap: {topic_id: float}  fraction of formula_ids that appeared in ALL channels
+    """
+    if weights is None:
+        weights = [1.0] * len(channel_results)
+
+    all_topics: set[str] = set()
+    for rl in channel_results:
+        all_topics.update(rl.keys())
+
+    fused: dict[str, list[tuple[str, str, float]]] = {}
+    overlap: dict[str, float] = {}
+
+    for tid in all_topics:
+        fid_scores: dict[str, float] = defaultdict(float)
+        fid_post: dict[str, str] = {}
+        # per-channel sets for overlap computation
+        channel_sets: list[set[str]] = []
+
+        for w, rl in zip(weights, channel_results):
+            hits = rl.get(tid, [])
+            fids_this_channel: set[str] = set()
+            for rank, (post_id, formula_id, _) in enumerate(hits, start=1):
+                fid_post[formula_id] = post_id
+                fid_scores[formula_id] += w / (rank + rrf_k)
+                fids_this_channel.add(formula_id)
+            channel_sets.append(fids_this_channel)
+
+        # overlap = |intersection of all channels| / |union of all channels|
+        if channel_sets:
+            inter = channel_sets[0].intersection(*channel_sets[1:])
+            union = channel_sets[0].union(*channel_sets[1:])
+            overlap[tid] = len(inter) / len(union) if union else 0.0
+        else:
+            overlap[tid] = 0.0
+
+        sorted_hits = sorted(fid_scores.items(), key=lambda x: -x[1])
+        fused[tid] = [(fid_post[fid], fid, score) for fid, score in sorted_hits]
+
+    return fused, overlap
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -475,12 +558,6 @@ def main() -> None:
         default="slt",
         help="Representation(s) to use. Single: slt|opt|slt_type. "
              "Comma-separated for RRF fusion: slt,opt  or  slt,opt,slt_type",
-    )
-    parser.add_argument(
-        "--metric", "-m",
-        choices=["cosine", "cosine_ms", "l2"],
-        default="cosine_ms",
-        help="Similarity metric (default: cosine_ms = mean-shift cosine)",
     )
     parser.add_argument(
         "--n",
@@ -510,13 +587,19 @@ def main() -> None:
         "--output", "-o",
         type=str,
         default=None,
-        help="Output run file path (default: data/runs/task2_<repr>_<metric>.tsv)",
+        help="Output run file path (default: data/runs/task2_<repr>_<model_version>.tsv)",
+    )
+    parser.add_argument(
+        "--model-version",
+        choices=["v1", "v2"],
+        default="v1",
+        help="FastText model version: v1 (n-grams, 300-dim) | v2 (no n-grams, 150-dim) (default: v1)",
     )
     parser.add_argument(
         "--embedding-dir",
         type=str,
         default=None,
-        help=f"FastText model directory (default: FORMULA_EMBEDDING_DIR = {FORMULA_EMBEDDING_DIR})",
+        help="FastText model directory override (default: data/models/{model-version})",
     )
     parser.add_argument(
         "--smoke-test",
@@ -530,9 +613,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    embedding_dir = Path(args.embedding_dir) if args.embedding_dir else FORMULA_EMBEDDING_DIR
+    model_version = args.model_version
+    embedding_dir = Path(args.embedding_dir) if args.embedding_dir else MODELS_DIR / model_version
     representations = [r.strip() for r in args.representation.split(",")]
-    run_name = f"task2_{'_'.join(representations)}_{args.metric}"
+    run_name = f"task2_{model_version}_{'_'.join(representations)}"
 
     # Output path
     if args.output:
@@ -545,7 +629,7 @@ def main() -> None:
     logger.info("ARQMath-3 TASK 2 FORMULA RETRIEVAL")
     logger.info("=" * 70)
     logger.info(f"Representations : {representations}")
-    logger.info(f"Metric          : {args.metric}")
+    logger.info(f"Model version   : {model_version}")
     logger.info(f"N (depth)       : {args.n}")
     logger.info(f"RRF k           : {args.rrf_k}")
     logger.info(f"Embedding dir   : {embedding_dir}")
@@ -568,9 +652,9 @@ def main() -> None:
         results = run_single_representation(
             topics=topics,
             representation=representations[0],
-            metric=args.metric,
             n=args.n,
             embedding_dir=embedding_dir,
+            model_version=model_version,
         )
     else:
         ranked_lists = []
@@ -578,9 +662,9 @@ def main() -> None:
             rl = run_single_representation(
                 topics=topics,
                 representation=repr_,
-                metric=args.metric,
                 n=args.n,
                 embedding_dir=embedding_dir,
+                model_version=model_version,
             )
             ranked_lists.append(rl)
         results = rrf_fuse(ranked_lists, rrf_k=args.rrf_k)

@@ -385,6 +385,10 @@ class FormulaFAISSIndexerIVFScalarQuantizer(BaseIndexer):
         embedding_type = embedding_type_map.get(embedding_type_name, TupleTokenizationMode.Both_Separated)
 
         encoder_maps_path = metadata.get("encoder_maps_path")
+        if not encoder_maps_path or not Path(encoder_maps_path).exists():
+            candidate = self.embedding_dir / tree_type_suffix / f"encoder_maps_{tree_type_suffix}.tsv"
+            if candidate.exists():
+                encoder_maps_path = str(candidate)
         if encoder_maps_path and Path(encoder_maps_path).exists():
             node_map, edge_map = load_maps(encoder_maps_path)
             node_id = max(node_map.values(), default=60000) + 1

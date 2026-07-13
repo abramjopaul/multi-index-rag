@@ -1,0 +1,6 @@
+run_name: "task2_opt_v2"
+representation: "opt"
+model_version: "v2"
+n: 2000
+force_rebuild: false
+experiment_name: "Task 2 Formula Retrieval"

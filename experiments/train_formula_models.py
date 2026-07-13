@@ -133,8 +133,8 @@ Examples:
         "--output-dir",
         type=str,
         default=None,
-        help="Override output directory for model artifacts (default: data/formula-indexing). "
-             "Use e.g. data/formula-indexing/v2 to avoid overwriting existing models."
+        help="Override output directory for model artifacts (default: data/models). "
+             "Use e.g. data/models/v2 for new model versions."
     )
 
     args = parser.parse_args()
@@ -153,7 +153,7 @@ Examples:
     logger.info(f"Workers: {args.num_workers}")
     logger.info(f"Epochs: {args.epochs}")
     logger.info(f"Vector size: {args.vector_size}")
-    logger.info(f"Output dir: {args.output_dir if args.output_dir else 'default (data/formula-indexing)'}")
+    logger.info(f"Output dir: {args.output_dir if args.output_dir else 'default (data/models)'}")
     logger.info("=" * 70 + "\n")
     
     # Start training

@@ -17,8 +17,7 @@ from gensim.models.callbacks import CallbackAny2Vec
 from tqdm import tqdm
 
 from multirag.config.path_configs import (
-    FASTTEXT_MODEL_DIR,
-    FORMULA_INDEX_DIR,
+    MODELS_DIR,
     OPT_REPRESENTATION,
     SLT_REPRESENTATION,
 )
@@ -304,7 +303,7 @@ class FormulaTrainerDirect:
             sg: Training algorithm: 1 = Skip-gram, 0 = CBOW (default: 1)
             hs: Use hierarchical softmax: 1 = yes, 0 = no (default: 0, use negative sampling)
             word_ngrams: Number of word n-grams (default: 1)
-            output_dir: Output directory (default: data/formula-indexing)
+            output_dir: Output directory (default: data/models)
             num_workers: Number of worker threads (default: 4, None = auto-tune)
             tokenize_number: Whether to split numeric values
                 - None (auto): True for SLT, False for OPT/SLT-TYPE
@@ -352,7 +351,7 @@ class FormulaTrainerDirect:
         self.num_workers = num_workers
 
         # Setup output directories
-        self.output_dir = Path(output_dir) if output_dir else FORMULA_INDEX_DIR
+        self.output_dir = Path(output_dir) if output_dir else MODELS_DIR
         makedirs(str(self.output_dir), exist_ok=True)
 
         # Artifact paths (use lowercase tree_type with hyphens replaced by underscores)
@@ -660,7 +659,7 @@ class FormulaTrainerDirect:
 
         Example:
             >>> trainer = FormulaTrainerDirect(tree_type="SLT")
-            >>> model = trainer.train_from_corpus("./data/formula-indexing/slt/corpus_slt.txt", epochs=5)
+            >>> model = trainer.train_from_corpus("./data/models/v1/slt/corpus_slt.txt", epochs=5)
         """
         if epochs is None:
             epochs = self.epochs

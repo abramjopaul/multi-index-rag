@@ -17,8 +17,7 @@ from gensim.models.callbacks import CallbackAny2Vec
 from tqdm import tqdm
 
 from multirag.config.path_configs import (
-    FASTTEXT_MODEL_DIR,
-    FORMULA_INDEX_DIR,
+    MODELS_DIR,
     LATEX_REPRESENTATION,
 )
 from multirag.formula_search import (
@@ -137,7 +136,7 @@ class FormulaTrainer:
             min_n: Minimum n-gram size (default: 2)
             max_n: Maximum n-gram size (default: 100)
             negative: Number of negative samples (default: 5)
-            output_dir: Output directory (default: data/formula-indexing)
+            output_dir: Output directory (default: data/models)
             use_process_pool: Use process pool for parallel LaTeX to MathML conversion (default: True)
             num_workers: Number of worker processes (default: 4, None = auto-tune)
             tokenize_number: Whether to split numeric values into individual digits
@@ -192,7 +191,7 @@ class FormulaTrainer:
             self.num_workers = num_workers
 
         # Setup output directories
-        self.output_dir = FORMULA_INDEX_DIR
+        self.output_dir = MODELS_DIR
         makedirs(str(self.output_dir), exist_ok=True)
 
         # Artifact paths (use lowercase tree_type with hyphens replaced by underscores)

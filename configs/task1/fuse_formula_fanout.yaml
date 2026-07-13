@@ -1,0 +1,9 @@
+run_name: "fuse_bm25_dense_formula_fused_block_drop_slt_type"
+run_files:
+  - "data/runs/task1/bm25_baseline_20260618.tsv"
+  - "data/runs/task1/dense_mpnet_20260614.tsv"
+  - "data/runs/task1/fusion/fuse_slt_opt_fanout_20260709_rrf.tsv"
+techniques: "rrf,combsum,combmnz"
+rrf_k: 60
+top_k: 1000
+output_dir: "data/runs/task1/fusion"
