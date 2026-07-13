@@ -2,7 +2,6 @@
 
 import json
 import os
-import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -96,92 +95,6 @@ def _avg_over_queries(results: dict[str, dict[str, float]]) -> dict[str, float]:
     return {key: totals[key] / counts[key] for key in totals}
 
 
-# ---------------------------------------------------------------------------
-# Formula selection helpers
-# ---------------------------------------------------------------------------
-
-# Matches single variables (a-z, A-Z, 0-9, up to 2 chars) or lone LaTeX
-# commands with no arguments (\infty, \alpha, \pi …).
-_SINGLE_SYMBOL_RE = re.compile(r"^[a-zA-Z0-9]{1,2}$|^\\[a-zA-Z]+$")
-
-
-def _strip_latex_delimiters(latex: str) -> str:
-    """Remove outer LaTeX math delimiters, returning bare content."""
-    s = latex.strip()
-    s = re.sub(r"\\begin\{[^}]*\}(.*?)\\end\{[^}]*\}", r"\1", s, flags=re.DOTALL)
-    if s.startswith("$$") and s.endswith("$$"):
-        s = s[2:-2]
-    elif s.startswith("\\[") and s.endswith("\\]"):
-        s = s[2:-2]
-    elif s.startswith("$") and s.endswith("$"):
-        s = s[1:-1]
-    return s.strip()
-
-
-def _is_clearly_trivial(latex: str) -> bool:
-    """True for single variables, digits, and lone LaTeX commands (\\infty, \\alpha)."""
-    return bool(_SINGLE_SYMBOL_RE.match(_strip_latex_delimiters(latex)))
-
-
-def _build_tuple_counts(latex_set: set[str]) -> dict[str, int]:
-    """Batch LaTeX → CMML → OPT tuple count used to rank formula complexity.
-
-    convert_batch2 outputs Content MathML, so we pair it with tree_type="OPT".
-    Using "SLT" here would silently return empty lists (SLT needs Presentation MathML).
-    The count is used only for ranking candidates, not for retrieval itself.
-    """
-    from multirag.formula_search.latex_mml import LatexToMathML
-    from multirag.formula_search.tuple_extraction import extract_tuples_from_mathml_direct
-
-    unique = list(latex_set)
-    mathml_list = LatexToMathML.convert_batch2(unique)
-    return {
-        lx: len(extract_tuples_from_mathml_direct(mml or "", tree_type="OPT"))
-        for lx, mml in zip(unique, mathml_list)
-    }
-
-
-def _select_formula_for_topic(
-    topic: dict,
-    tuple_counts: dict[str, int],
-) -> str | None:
-    """Pick the single best query formula for a topic.
-
-    Priority:
-    1. Highest-tuple-count non-trivial title formula.
-    2. Highest-tuple-count non-trivial question formula (if no title candidates).
-    3. Longest (by stripped length) formula when everything is clearly trivial.
-    """
-    title = topic.get("title", "")
-    formulas = topic.get("formulas", [])
-    if not formulas:
-        return None
-
-    seen: set[str] = set()
-    unique: list[dict] = []
-    for f in formulas:
-        if f["latex"] not in seen:
-            seen.add(f["latex"])
-            unique.append(f)
-
-    def _in_title(f: dict) -> bool:
-        return f.get("in_title", f["latex"] in title)
-
-    title_candidates = [
-        f["latex"] for f in unique if _in_title(f) and not _is_clearly_trivial(f["latex"])
-    ]
-    question_candidates = [
-        f["latex"] for f in unique if not _in_title(f) and not _is_clearly_trivial(f["latex"])
-    ]
-
-    def _best(pool: list[str]) -> str | None:
-        return max(pool, key=lambda lx: tuple_counts.get(lx, 0)) if pool else None
-
-    return (
-        _best(title_candidates)
-        or _best(question_candidates)
-        or max((f["latex"] for f in unique), key=lambda lx: len(_strip_latex_delimiters(lx)))
-    )
 
 
 def generate_run_file(
@@ -190,6 +103,7 @@ def generate_run_file(
     output_path: str | os.PathLike[str],
     run_name: str,
     k: int = 1000,
+    formula_config=None,
 ) -> None:
     """Generate a TREC run file by batch-searching all topics.
 
@@ -203,6 +117,8 @@ def generate_run_file(
         output_path: Path to write the TREC run file (TSV format).
         run_name: Name/identifier for this run (written in column 6).
         k: Number of results to retrieve per topic (default: 1000).
+        formula_config: FormulaSearchConfig instance controlling selection strategy.
+                        None → defaults (fanout, rrf_k=60, trivial_filter=True).
 
     Returns:
         None (writes run file as side effect).
@@ -211,10 +127,23 @@ def generate_run_file(
         FileNotFoundError: If topics_path does not exist.
         AttributeError: If indexer doesn't support batch_search.
     """
+    import logging as _logging
     # Inline import to avoid circular dependency at module level
+    from multirag.formula_search.formula_selector import (
+        _batch_extract_tuples,
+        select_fanout,
+        select_heuristic,
+    )
     from multirag.indexing.formula.faiss_scalar_quantizer import (
         FormulaFAISSIndexerIVFScalarQuantizer,
     )
+
+    _logger = _logging.getLogger(__name__)
+
+    # Use default FormulaSearchConfig if none provided (avoids circular import at top)
+    if formula_config is None:
+        from multirag.config.run_config import FormulaSearchConfig
+        formula_config = FormulaSearchConfig()
 
     topics_path = Path(topics_path)
     output_path = Path(output_path)
@@ -235,39 +164,53 @@ def generate_run_file(
 
     # Formula indexer path: per-formula batch_search + within-topic RRF merge
     if isinstance(indexer, FormulaFAISSIndexerIVFScalarQuantizer):
-        # Phase 1: batch-count OPT tuples for all non-trivial formula candidates
-        candidates = {
+        # Phase 1: batch-extract OPT tuples for all topic formulas
+        all_latex: list[str] = list({
             f["latex"]
             for topic in topics_list
             for f in topic.get("formulas", [])
-            if not _is_clearly_trivial(f["latex"])
-        }
-        tuple_counts = _build_tuple_counts(candidates)
+        })
+        tuple_map = _batch_extract_tuples(all_latex)
 
-        # Phase 2: heuristic selection — one formula per topic
+        # Phase 2: select query formulas per topic (fanout or heuristic)
         formula_queries: list[tuple[str, str]] = []
         qid_to_topic: dict[str, str] = {}
         for topic in topics_list:
-            latex = _select_formula_for_topic(topic, tuple_counts)
-            if latex:
-                uqid = f"{topic['topic_id']}_f0"
+            if formula_config.strategy == "fanout":
+                selected = select_fanout(
+                    topic, tuple_map, trivial_filter=formula_config.trivial_filter
+                )
+            else:
+                selected = select_heuristic(
+                    topic,
+                    tuple_map,
+                    trivial_filter=formula_config.trivial_filter,
+                    title_preference=formula_config.title_preference,
+                )
+            for i, latex in enumerate(selected):
+                uqid = f"{topic['topic_id']}_f{i}"
                 formula_queries.append((uqid, latex))
                 qid_to_topic[uqid] = topic["topic_id"]
 
         if not formula_queries:
             raise ValueError("No formulas found in topics — cannot run formula index search.")
 
+        _logger.info(
+            f"Strategy={formula_config.strategy}: {len(formula_queries)} formula queries "
+            f"across {len(topics_list)} topics (avg {len(formula_queries)/len(topics_list):.1f}/topic)"
+        )
+
         # Single batch_search call with all (unique_qid, latex) pairs
-        raw = indexer.batch_search(formula_queries, k=k)
+        raw = indexer.batch_search(formula_queries, k=formula_config.top_n)
 
         # RRF merge: accumulate scores per (topic_id, doc_id) across formula ranked lists
-        RRF_K = 60
+        rrf_k = formula_config.rrf_k
         topic_scores: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
         for uqid, hits in raw.items():
             topic_id = qid_to_topic[uqid]
             for rank, hit in enumerate(hits):
                 doc_id = hit["doc_id"]
-                topic_scores[topic_id][doc_id] += 1.0 / (rank + 1 + RRF_K)
+                topic_scores[topic_id][doc_id] += 1.0 / (rank + 1 + rrf_k)
 
         # Sort each topic's results by RRF score descending and take top-k
         merged: dict[str, list[tuple[str, float]]] = {

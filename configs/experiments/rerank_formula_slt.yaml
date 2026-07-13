@@ -19,7 +19,7 @@ aggregation: "mean"
 representation: "slt"
 
 # Directory containing trained FastText models.
-# null = defaults to data/formula-indexing (same as FORMULA_INDEX_DIR in path_configs.py)
+# null = defaults to data/models/v1 (FORMULA_EMBEDDING_DIR in path_configs.py)
 formula_embedding_dir: null
 
 # Base dir containing slt_representation_v3/ and opt_representation_v3/ TSV subdirs

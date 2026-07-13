@@ -1,0 +1,8 @@
+run_name: "formula_v1_opt"
+index_type: "formula"
+formula_representation: "opt"
+num_hits: 1000
+formula_embedding_dir: "data/models/v1"
+formula_index_path: "data/indices/formula/answer/opt"
+formula_tsv_base_dir: "data/raw/collection/formula"
+force_rebuild: true

@@ -1,0 +1,10 @@
+run_name: "a3_slt_opt_rrf_k60_n5000_2021"
+representation: "slt,opt"
+model_version: "v1"
+n: 5000
+rrf_k: 60
+fusion_method: "rrf"
+channel_weights: null
+year: "2021"
+force_rebuild: false
+experiment_name: "A3 SLT+OPT Fusion"

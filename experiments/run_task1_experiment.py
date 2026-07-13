@@ -10,9 +10,9 @@ This script orchestrates the complete evaluation pipeline:
 6. Print formatted report to console
 
 Usage:
-    poetry run python experiments/run_experiment.py configs/experiments/run_config.yaml
-    poetry run python experiments/run_experiment.py configs/experiments/run_config.yaml --verbose
-    poetry run python experiments/run_experiment.py configs/experiments/run_config.yaml --dry-run
+    poetry run python experiments/run_task1_experiment.py configs/task1/formula_slt.yaml
+    poetry run python experiments/run_task1_experiment.py configs/task1/formula_opt.yaml --verbose
+    poetry run python experiments/run_task1_experiment.py configs/task1/formula_slt.yaml --dry-run
 """
 
 import os
@@ -36,11 +36,11 @@ from logging_config import configure_logging
 
 from multirag.config import RunConfigManager
 from multirag.config.path_configs import (
+    ANSWER_FORMULA_INDEX_DIR,
     ANSWERS_JSONL,
     DENSE_INDEX_PATH,
     FORMULA_DIR,
     FORMULA_EMBEDDING_DIR,
-    FORMULA_FAISS_INDEX_DIR,
     QREL_TASK1_2022_OFFICIAL,
     RUNS_DIR,
     SPARSE_INDEX_PATH,
@@ -122,7 +122,7 @@ def create_indexer(
 
         representation = config.formula_representation
         index_path = config.formula_index_path or str(
-            FORMULA_FAISS_INDEX_DIR / f"sq_{representation}"
+            ANSWER_FORMULA_INDEX_DIR / representation
         )
         embedding_dir = config.formula_embedding_dir or str(FORMULA_EMBEDDING_DIR)
         tsv_base_dir = config.formula_tsv_base_dir or str(FORMULA_DIR)
@@ -157,9 +157,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  poetry run python experiments/run_experiment.py configs/experiments/run_config.yaml
-  poetry run python experiments/run_experiment.py configs/experiments/run_config.yaml --verbose
-  poetry run python experiments/run_experiment.py configs/experiments/run_config.yaml --dry-run
+  poetry run python experiments/run_task1_experiment.py configs/task1/formula_slt.yaml
+  poetry run python experiments/run_task1_experiment.py configs/task1/formula_opt.yaml --verbose
+  poetry run python experiments/run_task1_experiment.py configs/task1/formula_slt.yaml --dry-run
         """,
     )
     parser.add_argument(
@@ -202,9 +202,9 @@ Examples:
         if not args.dry_run:
             logger.info("Initializing Weights & Biases...")
             wandb.init(
-                project="multi-index-rag",
+                project="one-last-run",
                 name=config.run_name,
-                group=config.get_experiment_name(),
+                group="B:task 1",
                 tags=(
                     [config.index_type]
                     if isinstance(config.index_type, str)
@@ -234,6 +234,7 @@ Examples:
             output_path=run_path,
             run_name=config.run_name,
             k=config.num_hits,
+            formula_config=config.formula_search,
         )
         logger.info(f"Run file generated: {run_path} ({run_path.stat().st_size} bytes)")  #type: ignore
 

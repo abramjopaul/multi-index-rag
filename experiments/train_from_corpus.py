@@ -19,14 +19,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Train SLT from corpus with 5 epochs
-  python train_from_corpus.py -c ./data/formula-indexing/slt/corpus_slt.txt -e 5
-  
-  # Train OPT from corpus with custom workers
-  python train_from_corpus.py -c ./data/formula-indexing/opt/corpus_opt.txt -w 16 -e 10
-  
-  # Train SLT-TYPE from corpus
-  python train_from_corpus.py -c ./data/formula-indexing/slt_type/corpus_slt_type.txt -t SLT-TYPE
+
+  # Train OPT from corpus with 10 epochs and save to a specific output directory
+  poetry run python3 experiments/train_from_corpus.py -c data/models/v2/opt/corpus_opt.txt -e 10 --output-dir data/models/v2 -t OPT
+
         """
     )
     

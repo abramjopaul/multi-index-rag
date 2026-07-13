@@ -6,7 +6,7 @@ Differences from the Task 1 index:
   - Covers ALL post types (question, answer, comment), not just answers.jsonl.
   - Vectors are L2-normalised before insertion so FAISS L2 distances are directly
     interpretable as cosine distances (cosine = 1 - L2^2/2 for unit vectors).
-  - Output goes to data/formula-indexing/collection/{repr}/ (not data/indices/formula/).
+  - Output goes to data/indices/formula/collection/{model_version}/{repr}/
 
 The visual_id mapping (formula_instance_id -> visual_id) is NOT stored in the FAISS
 id_map. It is loaded at retrieval time directly from the v3 TSV files.
@@ -37,9 +37,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from logging_config import configure_logging
+from multirag.config import Task2ConfigManager
 from multirag.config.path_configs import (
     COLLECTION_FORMULA_INDEX_DIR,
-    FORMULA_EMBEDDING_DIR,
+    MODELS_DIR,
     OPT_REPRESENTATION,
     SLT_REPRESENTATION,
 )
@@ -70,8 +71,8 @@ MINI_BATCH = 1024
 def setup_model_and_tokenizer(
     representation: str,
     embedding_dir: Path,
-) -> tuple[FastTextModelManager, TupleTokenizer, str, int]:
-    """Load FastText model and build tokenizer. Returns (model, tokenizer, tree_type, dim)."""
+) -> tuple[FastTextModelManager, TupleTokenizer, str, int, np.ndarray]:
+    """Load FastText model and build tokenizer. Returns (model, tokenizer, tree_type, dim, vocab_mean)."""
     suffix = representation.lower().replace("-", "_")
     model_file = embedding_dir / suffix / f"fasttext_model_{suffix}.bin"
     metadata_file = embedding_dir / suffix / f"training_metadata_{suffix}.json"
@@ -99,6 +100,11 @@ def setup_model_and_tokenizer(
     embedding_type = embedding_type_map.get(embedding_type_name, TupleTokenizationMode.Both_Separated)
 
     encoder_maps_path = meta.get("encoder_maps_path")
+    # Fall back to co-located file when stored path is stale (e.g. after directory rename)
+    if not encoder_maps_path or not Path(encoder_maps_path).exists():
+        candidate = embedding_dir / suffix / f"encoder_maps_{suffix}.tsv"
+        if candidate.exists():
+            encoder_maps_path = str(candidate)
     if encoder_maps_path and Path(encoder_maps_path).exists():
         node_map, edge_map = load_maps(encoder_maps_path)
         node_id = max(node_map.values(), default=60000) + 1
@@ -117,15 +123,27 @@ def setup_model_and_tokenizer(
     tree_type_map = {"slt": "SLT", "opt": "OPT", "slt_type": "SLT-TYPE"}
     tree_type = tree_type_map.get(suffix, "SLT")
 
-    logger.info(f"Model loaded: dim={dim}, tree_type={tree_type}, embedding_type={embedding_type_name}")
-    return mm, tokenizer, tree_type, dim
+    vocab_mean = np.mean(mm.model.wv.vectors, axis=0).astype(np.float32)
+    logger.info(f"Model loaded: dim={dim}, tree_type={tree_type}, embedding_type={embedding_type_name}, vocab_mean_norm={np.linalg.norm(vocab_mean):.4f}")
+    return mm, tokenizer, tree_type, dim, vocab_mean
 
 
 # ---------------------------------------------------------------------------
 # Embedding helper
 # ---------------------------------------------------------------------------
 
-def embed_mathml(mathml: str, mm: FastTextModelManager, tokenizer: TupleTokenizer, tree_type: str) -> np.ndarray | None:
+def embed_mathml(
+    mathml: str,
+    mm: FastTextModelManager,
+    tokenizer: TupleTokenizer,
+    tree_type: str,
+    vocab_mean: np.ndarray,
+) -> np.ndarray | None:
+    """Embed MathML string as a mean-shifted, L2-normalised vector (cosine_ms metric).
+
+    Returns a unit vector ready to insert into the FAISS L2 index, or None on failure.
+    With unit vectors, FAISS squared-L2 distance d satisfies: cosine_sim = 1 - d/2.
+    """
     try:
         tuples = extract_tuples_from_mathml_direct(mathml, tree_type=tree_type)  # type: ignore[arg-type]
         if not tuples:
@@ -134,7 +152,13 @@ def embed_mathml(mathml: str, mm: FastTextModelManager, tokenizer: TupleTokenize
         if not encoded:
             return None
         vec = np.array(mm.get_sentence_vector(encoded), dtype=np.float32)
-        return vec if np.any(vec) else None
+        if not np.any(vec):
+            return None
+        vec = vec - vocab_mean          # mean-shift: removes bias toward common tokens
+        norm = np.linalg.norm(vec)
+        if norm < 1e-9:
+            return None
+        return vec / norm               # unit vector → FAISS L2 ≡ cosine distance
     except Exception:
         return None
 
@@ -204,21 +228,27 @@ def build_index(
         return
 
     # Load model
-    mm, tokenizer, tree_type, dim = setup_model_and_tokenizer(representation, embedding_dir)
+    mm, tokenizer, tree_type, dim, vocab_mean = setup_model_and_tokenizer(representation, embedding_dir)
 
     logger.info(f"Representation: {representation} | Dim: {dim} | TSV dir: {tsv_dir}")
     logger.info(f"Output index: {index_dir}")
     logger.info(f"Total TSV files: {len(tsv_files)}")
 
     id_map: dict[int, list] = {}
-    processed: list[str] = cp.get("processed", [])
-    indexed_count: int = cp.get("indexed_count", 0)
-    already_trained: bool = cp.get("trained", False)
+    if force:
+        # Discard checkpoint — rebuild from scratch
+        processed: list[str] = []
+        indexed_count: int = 0
+        already_trained: bool = False
+    else:
+        processed = cp.get("processed", [])
+        indexed_count = cp.get("indexed_count", 0)
+        already_trained = cp.get("trained", False)
 
     # ---- Phase 1: Train FAISS index ----------------------------------------
     if not already_trained:
         train_target = max(NLIST * 40, 655_360)  # at least 40 vectors/cluster
-        logger.info(f"Collecting up to {train_target:,} training vectors (will L2-normalise)...")
+        logger.info(f"Collecting up to {train_target:,} training vectors...")
         training_vecs: list[np.ndarray] = []
         count = 0
         for tsv_file in tqdm(tsv_files, desc="Collecting training vectors"):
@@ -234,7 +264,7 @@ def build_index(
                     mathml = row.get("formula", "").strip()
                     if not mathml:
                         continue
-                    vec = embed_mathml(mathml, mm, tokenizer, tree_type)
+                    vec = embed_mathml(mathml, mm, tokenizer, tree_type, vocab_mean)
                     if vec is not None:
                         training_vecs.append(vec)
                     count += 1
@@ -242,8 +272,10 @@ def build_index(
         if len(training_vecs) < NLIST:
             raise ValueError(f"Only {len(training_vecs)} training vectors — need at least {NLIST}")
 
+        # embed_mathml already mean-shifts and normalises; faiss.normalize_L2 is a no-op
+        # but kept to ensure exact unit length after float32 rounding
         training_arr = np.array(training_vecs, dtype=np.float32)
-        faiss.normalize_L2(training_arr)  # normalise training vectors
+        faiss.normalize_L2(training_arr)
         del training_vecs
 
         logger.info(f"Training FAISS IVFScalarQuantizer (NLIST={NLIST}, dim={dim}) on {len(training_arr):,} vectors...")
@@ -287,16 +319,8 @@ def build_index(
                 if not formula_id or not mathml:
                     continue
 
-                vec = embed_mathml(mathml, mm, tokenizer, tree_type)
+                vec = embed_mathml(mathml, mm, tokenizer, tree_type, vocab_mean)
                 if vec is None:
-                    total_failed += 1
-                    continue
-
-                # L2-normalise so FAISS L2 dist == cosine distance proxy
-                norm = np.linalg.norm(vec)
-                if norm > 1e-9:
-                    vec /= norm
-                else:
                     total_failed += 1
                     continue
 
@@ -350,18 +374,30 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python experiments/build_collection_formula_index.py --representation slt
-  python experiments/build_collection_formula_index.py --representation opt
-  python experiments/build_collection_formula_index.py --representation slt_type
-  python experiments/build_collection_formula_index.py --representation slt --limit 100000
-  python experiments/build_collection_formula_index.py --representation slt --force
+  python experiments/build_collection_formula_index.py --representation slt --model-version v1
+  python experiments/build_collection_formula_index.py --representation opt --model-version v2
+  python experiments/build_collection_formula_index.py --config configs/task2/step1_metric_cosine_ms.yaml
+  python experiments/build_collection_formula_index.py --representation slt --model-version v1 --limit 100000
+  python experiments/build_collection_formula_index.py --representation slt --model-version v1 --force
         """,
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to Task 2 YAML config file. When provided, all other args are derived from it.",
     )
     parser.add_argument(
         "-r", "--representation",
         choices=["slt", "opt", "slt_type"],
-        required=True,
-        help="Which formula representation to build the index for",
+        default=None,
+        help="Which formula representation to build the index for (required without --config)",
+    )
+    parser.add_argument(
+        "--model-version",
+        choices=["v1", "v2"],
+        default="v1",
+        help="FastText model version: v1 (n-grams, 300-dim) | v2 (no n-grams, 150-dim) (default: v1)",
     )
     parser.add_argument(
         "--force",
@@ -378,33 +414,51 @@ Examples:
         "--embedding-dir",
         type=str,
         default=None,
-        help=f"FastText model directory (default: FORMULA_EMBEDDING_DIR = {FORMULA_EMBEDDING_DIR})",
+        help="FastText model directory override (default: data/models/{model-version})",
     )
     args = parser.parse_args()
 
-    embedding_dir = Path(args.embedding_dir) if args.embedding_dir else FORMULA_EMBEDDING_DIR
-    tsv_dir = get_tsv_dir(args.representation)
-    index_dir = COLLECTION_FORMULA_INDEX_DIR / args.representation
+    # Derive parameters — YAML config takes precedence over CLI flags
+    if args.config:
+        cfg = Task2ConfigManager.from_yaml(args.config)
+        representations = cfg.get_representations()
+        model_version = cfg.model_version
+        embedding_dir = Path(cfg.embedding_dir) if cfg.embedding_dir else MODELS_DIR / model_version
+        force = cfg.force_rebuild
+        limit = cfg.index_limit
+    else:
+        if args.representation is None:
+            parser.error("--representation is required when --config is not provided")
+        representations = [args.representation]
+        model_version = args.model_version
+        embedding_dir = Path(args.embedding_dir) if args.embedding_dir else MODELS_DIR / model_version
+        force = args.force
+        limit = args.limit
 
-    logger.info("=" * 70)
-    logger.info("TASK 2 COLLECTION FORMULA INDEX BUILD")
-    logger.info("=" * 70)
-    logger.info(f"Representation : {args.representation}")
-    logger.info(f"Embedding dir  : {embedding_dir}")
-    logger.info(f"TSV source     : {tsv_dir}")
-    logger.info(f"Index output   : {index_dir}")
-    logger.info(f"Limit          : {args.limit or 'all'}")
-    logger.info(f"Force rebuild  : {args.force}")
-    logger.info("=" * 70)
+    for representation in representations:
+        tsv_dir = get_tsv_dir(representation)
+        index_dir = COLLECTION_FORMULA_INDEX_DIR / model_version / representation
 
-    build_index(
-        representation=args.representation,
-        embedding_dir=embedding_dir,
-        tsv_dir=tsv_dir,
-        index_dir=index_dir,
-        force=args.force,
-        limit=args.limit,
-    )
+        logger.info("=" * 70)
+        logger.info("TASK 2 COLLECTION FORMULA INDEX BUILD")
+        logger.info("=" * 70)
+        logger.info(f"Representation : {representation}")
+        logger.info(f"Model version  : {model_version}")
+        logger.info(f"Embedding dir  : {embedding_dir}")
+        logger.info(f"TSV source     : {tsv_dir}")
+        logger.info(f"Index output   : {index_dir}")
+        logger.info(f"Limit          : {limit or 'all'}")
+        logger.info(f"Force rebuild  : {force}")
+        logger.info("=" * 70)
+
+        build_index(
+            representation=representation,
+            embedding_dir=embedding_dir,
+            tsv_dir=tsv_dir,
+            index_dir=index_dir,
+            force=force,
+            limit=limit,
+        )
 
 
 if __name__ == "__main__":

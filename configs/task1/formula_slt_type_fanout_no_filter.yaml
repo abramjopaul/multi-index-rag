@@ -1,0 +1,13 @@
+run_name: "slt_type_fanout_no_filter"
+index_type: "formula"
+formula_representation: "slt_type"
+num_hits: 1000
+formula_embedding_dir: "data/models/v1"
+formula_index_path: "data/indices/formula/answer/slt_type"
+formula_tsv_base_dir: "data/raw/collection/formula"
+force_rebuild: false
+formula_search:
+  strategy: fanout
+  top_n: 1000
+  rrf_k: 60
+  trivial_filter: false

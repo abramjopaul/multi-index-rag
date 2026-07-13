@@ -225,7 +225,7 @@ def build_embedder():
     tmp = tempfile.mkdtemp(prefix="retrieval_test_")
     emb = FormulaFAISSIndexerIVFScalarQuantizer(
         index_path=tmp,
-        embedding_dir=str(FORMULA_EMBEDDING_DIR),
+        embedding_dir=str('data/models/v1'),
         representation="slt",
     )
     emb.embed_formula("x")  # warm up
