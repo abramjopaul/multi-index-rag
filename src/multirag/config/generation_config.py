@@ -26,6 +26,11 @@ class GeneratorConfig(BaseModel):
     dtype: str = "bfloat16"          # "float16" | "bfloat16"
     quantization: str | None = None  # None | "awq" | "gptq" | "int4" | "int8"
     backend: str = "vllm"           # "vllm" | "hf"
+    # vLLM only. None = use the model's own config.json max_position_embeddings,
+    # which can exceed available KV cache memory for long-context models (e.g.
+    # Llama 3.1's 131072 default needs 16GiB of KV cache alone on this task's
+    # short no-RAG prompts). Set explicitly to cap it to what actually fits.
+    max_model_len: int | None = None
     decoding: DecodingConfig = Field(default_factory=DecodingConfig)
 
 
@@ -39,6 +44,8 @@ class RagasJudgeConfig(BaseModel):
         default=["answer_relevance", "answer_correctness", "semantic_similarity", "rouge_l"]
     )
     n_repeats: int = 1
+    seed: int = 42   # forwarded to ChatGoogleGenerativeAI(seed=...) in ragas_eval.py for
+                      # judge-call reproducibility (Gemini docs this as best-effort, not guaranteed)
 
 
 class GenerationRunConfig(BaseModel):
@@ -53,6 +60,10 @@ class GenerationRunConfig(BaseModel):
     ground_truth_strategy: str = "top_scored"  # "top_scored": highest-label then highest SE score
     ragas: RagasJudgeConfig = Field(default_factory=RagasJudgeConfig)
     n_topics: int | None = None        # None = all; CLI --n-topics overrides this
+    # Filter topics to ground-truth-having ones BEFORE truncating to n_topics
+    # (see sample_builder.build_generation_samples). Off by default: run_c0_1.py's
+    # existing behavior (topics[:n_topics], no GT filtering) is unaffected.
+    require_ground_truth: bool = False
     experiment_name: str | None = None
 
 

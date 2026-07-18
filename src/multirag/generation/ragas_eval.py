@@ -16,10 +16,46 @@ from __future__ import annotations
 import logging
 import math
 import os
+import sys
 import time
+import types
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+
+def _patch_ragas_vertexai_shim() -> None:
+    """Work around ragas.llms.base unconditionally importing a removed module.
+
+    ragas/llms/base.py does `from langchain_community.chat_models.vertexai import
+    ChatVertexAI` at import time, but langchain-community dropped that submodule
+    (Vertex AI support moved to the separate langchain-google-vertexai package).
+    This breaks `import ragas` entirely, even though this project only ever uses
+    the 'gemini' backend. See https://github.com/vibrantlabsai/ragas/issues/2745.
+    """
+    module_name = "langchain_community.chat_models.vertexai"
+    try:
+        __import__(module_name)
+        return  # real module is present (e.g. langchain-community adds it back)
+    except ModuleNotFoundError:
+        pass
+
+    stub = types.ModuleType(module_name)
+
+    class ChatVertexAI:
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "ChatVertexAI is unavailable: this is a stub installed by "
+                "ragas_eval.py because langchain-community no longer ships "
+                "langchain_community.chat_models.vertexai. This project only "
+                "uses the 'gemini' backend."
+            )
+
+    stub.ChatVertexAI = ChatVertexAI
+    sys.modules[module_name] = stub
+
+
+_patch_ragas_vertexai_shim()
 
 # Metrics that require an LLM judge call
 _LLM_METRICS = frozenset({"answer_relevance", "answer_correctness", "faithfulness",
@@ -56,19 +92,26 @@ class RagasEvaluator:
         self._llm = None
         self._embeddings = None
         self._initialized = False
+        # Populated by _run_ragas_subset() whenever "faithfulness" runs; read via
+        # get_faithfulness_claim_counts() immediately after evaluate() returns
+        # (each evaluate() call resets and overwrites these).
+        self.last_faithfulness_traces = None
+        self.last_faithfulness_topic_ids = None
 
     def _lazy_init(self) -> None:
         """Initialize LLM and embedding wrappers on first use."""
         if self._initialized:
             return
 
-        if self._config.backend == "gemini":
-            self._llm = self._build_gemini_llm()
-        else:
-            raise NotImplementedError(
-                f"RAGAS judge backend {self._config.backend!r} not yet implemented. "
-                "Use 'gemini'."
-            )
+        needs_llm = any(m in _LLM_METRICS for m in self._metrics)
+        if needs_llm:
+            if self._config.backend == "gemini":
+                self._llm = self._build_gemini_llm()
+            else:
+                raise NotImplementedError(
+                    f"RAGAS judge backend {self._config.backend!r} not yet implemented. "
+                    "Use 'gemini'."
+                )
 
         self._embeddings = self._build_embeddings()
         self._initialized = True
@@ -94,12 +137,14 @@ class RagasEvaluator:
                 model=self._config.model,
                 google_api_key=api_key,
                 rate_limiter=rate_limiter,
+                seed=self._config.seed,
             )
         except (ImportError, TypeError):
             # Older langchain: no rate_limiter kwarg; fall back to manual sleep
             chat_model = ChatGoogleGenerativeAI(
                 model=self._config.model,
                 google_api_key=api_key,
+                seed=self._config.seed,
             )
             self._manual_rate_limit = True
         else:
@@ -107,9 +152,27 @@ class RagasEvaluator:
 
         logger.info(
             f"Gemini judge ready: model={self._config.model}, "
-            f"rpm_limit={self._rpm_limit}"
+            f"rpm_limit={self._rpm_limit}, seed={self._config.seed}"
         )
-        return LangchainLLMWrapper(chat_model)
+        # bypass_n=True: Gemini rejects candidateCount>1 ("Multiple candidates is
+        # not enabled for this model") for flash-lite models, so metrics like
+        # ResponseRelevancy (strictness=3) must issue 3 separate n=1 calls instead
+        # of one call requesting 3 candidates.
+        wrapper = LangchainLLMWrapper(chat_model, bypass_n=True)
+        # Force temperature=0 on every real judge call. Without this the judge
+        # was never actually pinned despite the generator being frozen: ragas's
+        # own get_temperature(n) returns 0.01 for n=1 calls (answer_correctness,
+        # faithfulness, context_precision, context_recall) and 0.3 for
+        # answer_relevance's n=3 strictness calls, and it MUTATES
+        # chat_model.temperature in place before every real call — so passing
+        # temperature=0 to ChatGoogleGenerativeAI's constructor would be a
+        # silent no-op. This override is unconditional (not config-gated)
+        # because there's no legitimate reason for a reproducibility-focused
+        # judge to run above temperature 0. Note: Gemini documents seed as
+        # best-effort reproducibility, not a hard guarantee — some residual
+        # provider-side nondeterminism is expected even with both of these set.
+        wrapper.get_temperature = lambda n: 0.0
+        return wrapper
 
     def _build_embeddings(self):
         from langchain_huggingface import HuggingFaceEmbeddings
@@ -153,7 +216,7 @@ class RagasEvaluator:
             # Instantiate with appropriate kwargs
             try:
                 if name in _LLM_METRICS and name not in ("semantic_similarity",):
-                    if name == "answer_relevance":
+                    if name in ("answer_relevance", "answer_correctness"):
                         obj = cls(llm=self._llm, embeddings=self._embeddings)
                     else:
                         obj = cls(llm=self._llm)
@@ -176,12 +239,22 @@ class RagasEvaluator:
           - context-requiring metrics: skipped when contexts is empty
         """
         self._lazy_init()
+        self.last_faithfulness_traces = None
+        self.last_faithfulness_topic_ids = None
 
         # Partition metrics by what they need
         active = [m for m in self._metrics]
         ref_free = [m for m in active if m not in _NEEDS_REFERENCE and m not in _NEEDS_CONTEXT]
         ref_req = [m for m in active if m in _NEEDS_REFERENCE and m not in _NEEDS_CONTEXT]
-        ctx_req = [m for m in active if m in _NEEDS_CONTEXT]
+        # context-requiring metrics split further: faithfulness needs context
+        # only, while context_precision/context_recall need context AND
+        # reference. LLMContextPrecisionWithReference does not NaN or error on
+        # an empty-string reference — it silently produces a real, near-zero
+        # score (denominator guarded by +1e-10) — so samples without
+        # ground_truth must be excluded from that group, not just NaN-filled
+        # downstream.
+        ctx_only = [m for m in active if m in _NEEDS_CONTEXT and m not in _NEEDS_REFERENCE]
+        ctx_and_ref = [m for m in active if m in _NEEDS_CONTEXT and m in _NEEDS_REFERENCE]
 
         # Base result: all NaN
         results: list[dict] = [
@@ -210,20 +283,48 @@ class RagasEvaluator:
             else:
                 logger.warning("No samples have ground_truth; skipping reference metrics.")
 
-        # Run context-requiring metrics on samples with non-empty contexts
-        if ctx_req:
+        # Run context-only metrics (faithfulness) on samples with non-empty contexts
+        if ctx_only:
             has_ctx_idx = [i for i, s in enumerate(samples) if s.contexts]
             if has_ctx_idx:
                 ctx_samples = [samples[i] for i in has_ctx_idx]
                 logger.info(
-                    f"Running context metrics: {ctx_req} on "
+                    f"Running context-only metrics: {ctx_only} on "
                     f"{len(ctx_samples)}/{len(samples)} samples with context"
                 )
-                cr_results = self._run_ragas_subset(ctx_samples, ctx_req)
+                co_results = self._run_ragas_subset(ctx_samples, ctx_only)
                 for local_i, global_i in enumerate(has_ctx_idx):
+                    results[global_i].update(co_results[local_i])
+            else:
+                logger.info("No samples have context; skipping context-only metrics.")
+
+        # Run context+reference metrics (context_precision, context_recall) only
+        # on samples that have BOTH — see comment above on why empty-reference
+        # samples must be excluded rather than left for downstream NaN-filtering.
+        if ctx_and_ref:
+            has_both_idx = [
+                i for i, s in enumerate(samples) if s.contexts and s.ground_truth is not None
+            ]
+            n_dropped = sum(1 for s in samples if s.contexts and s.ground_truth is None)
+            if n_dropped:
+                logger.warning(
+                    f"Context+reference metrics {ctx_and_ref}: {n_dropped} sample(s) have "
+                    "context but no ground_truth — skipped (NaN), not run with reference=''."
+                )
+            if has_both_idx:
+                both_samples = [samples[i] for i in has_both_idx]
+                logger.info(
+                    f"Running context+reference metrics: {ctx_and_ref} on "
+                    f"{len(both_samples)}/{len(samples)} samples with context and ground truth"
+                )
+                cr_results = self._run_ragas_subset(both_samples, ctx_and_ref)
+                for local_i, global_i in enumerate(has_both_idx):
                     results[global_i].update(cr_results[local_i])
             else:
-                logger.info("No samples have context; skipping context-requiring metrics.")
+                logger.info(
+                    "No samples have both context and ground_truth; "
+                    "skipping context+reference metrics."
+                )
 
         return results
 
@@ -233,6 +334,7 @@ class RagasEvaluator:
         """Run a subset of metrics on a subset of samples via ragas.evaluate()."""
         from datasets import Dataset
         from ragas import evaluate as ragas_evaluate
+        from ragas.run_config import RunConfig
 
         metric_objs_with_names = self._build_metric_objects(metric_names)
         if not metric_objs_with_names:
@@ -259,15 +361,40 @@ class RagasEvaluator:
         result = ragas_evaluate(
             dataset=dataset,
             metrics=metric_objs,
+            llm=self._llm,
+            embeddings=self._embeddings,
+            # 300s was too short for the context_precision+context_recall batch:
+            # context_precision alone can issue up to 5 Gemini calls/topic (one per
+            # retrieved chunk), so 20 topics x up to 6 calls/topic at rpm_limit=10
+            # (~1 call/6s) is up to ~12 min worst case. Confirmed via wandb run
+            # 2fn5h7dp/output.log: dozens of "Job[N]: TimeoutError()" clustered
+            # right at the old 300s mark, only in this batch (context_recall and
+            # faithfulness, with far fewer calls/topic, never timed out). 900s
+            # gives headroom above the ~720s worst case.
+            run_config=RunConfig(timeout=900),
             raise_exceptions=False,
         )
 
-        # Convert RAGAS result to list of per-sample dicts
+        if "faithfulness" in metric_names:
+            # result.traces is a documented public field (EvaluationResult),
+            # in dataset row order — verified: per-row chain groups are
+            # created synchronously before any async metric execution starts.
+            self.last_faithfulness_traces = result.traces
+            self.last_faithfulness_topic_ids = [s.topic_id for s in samples]
+
+        # Convert RAGAS result to list of per-sample dicts.
+        # ragas.evaluate() keys metrics with a `mode` attribute (e.g. RougeScore's
+        # fmeasure/precision/recall) as "{name}(mode={mode})" instead of bare
+        # `name` — replicate that here or the lookup silently misses and returns NaN.
         result_df = result.to_pandas()
+        ragas_names = [
+            f"{obj.name}(mode={obj.mode})" if hasattr(obj, "mode") else obj.name
+            for obj in metric_objs
+        ]
         per_sample = []
         for _, row in result_df.iterrows():
             d = {}
-            for name, ragas_name in zip(built_names, [obj.name for obj in metric_objs]):
+            for name, ragas_name in zip(built_names, ragas_names):
                 val = row.get(ragas_name, float("nan"))
                 d[name] = float(val) if val is not None and not (
                     isinstance(val, float) and math.isnan(val)
@@ -275,6 +402,29 @@ class RagasEvaluator:
             per_sample.append(d)
 
         return per_sample
+
+    def get_faithfulness_claim_counts(self) -> dict[str, int | None] | None:
+        """Return {topic_id: claim_count} from the most recent evaluate() call,
+        or None if faithfulness wasn't run that call (not requested, or no
+        sample had context). Must be read immediately after evaluate() —
+        each evaluate() call resets and overwrites these traces.
+
+        Claim count = how many statements Faithfulness's statement-generation
+        step decomposed the answer into for that topic. Diagnostic for
+        distinguishing claim-decomposition drift (denominator changes between
+        repeats) from entailment-verdict drift (same claims, different
+        supported/not-supported calls).
+        """
+        if self.last_faithfulness_traces is None:
+            return None
+        counts: dict[str, int | None] = {}
+        for topic_id, trace in zip(self.last_faithfulness_topic_ids, self.last_faithfulness_traces):
+            try:
+                statements = trace["faithfulness"]["statement_generator_prompt"]["output"].statements
+                counts[topic_id] = len(statements)
+            except (KeyError, TypeError, AttributeError):
+                counts[topic_id] = None
+        return counts
 
     def aggregate(self, per_sample: list[dict]) -> dict[str, float]:
         """Compute mean and std per metric (NaN samples excluded)."""

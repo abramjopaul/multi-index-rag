@@ -10,6 +10,7 @@ generator:
   dtype: "bfloat16"
   quantization: null
   backend: "vllm"
+  max_model_len: 8192
   decoding:
     temperature: 0.0
     top_p: 1.0
@@ -26,9 +27,9 @@ ground_truth_strategy: "top_scored"
 
 ragas:
   backend: "gemini"
-  model: "gemini-1.5-flash"
-  api_key_env: ""
-  rpm_limit: 14
+  model: "gemini-flash-lite-latest"
+  api_key_env: "GEMINI_API_KEY"
+  rpm_limit: 10
   embedding_model: "sentence-transformers/all-mpnet-base-v2"
   metrics:
     - "answer_relevance"

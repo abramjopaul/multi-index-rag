@@ -16,6 +16,12 @@ Modules:
     - config: Configuration management
 """
 
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
 from . import embedding, formula_search
 
 __version__ = "0.1.0"

@@ -1,3 +1,6 @@
+# Secrets — never commit
+.env
+
 # Poetry virtualenv (Poetry manages this outside the project by default,
 # but ignore it if you've configured it to be inside)
 .venv/
