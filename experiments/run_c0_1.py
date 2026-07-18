@@ -32,7 +32,6 @@ import json
 import logging
 import math
 import sys
-from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -43,109 +42,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from logging_config import configure_logging
 
 from multirag.config.generation_config import GenerationRunConfigManager
-from multirag.config.path_configs import (
-    ANSWERS_JSONL,
-    QREL_TASK1_2022_OFFICIAL,
-    TASK_C_RUNS_DIR,
-    TOPICS_JSONL,
-)
+from multirag.config.path_configs import TASK_C_RUNS_DIR
 from multirag.generation.context_source import build_context_source
-from multirag.generation.generator import build_generator
 from multirag.generation.prompt_template import get_template
-from multirag.generation.ragas_eval import RagasEvaluator, RagasSample
+from multirag.generation.ragas_eval import RagasEvaluator
+from multirag.generation.sample_builder import build_generation_samples, load_topics
 
 configure_logging(level="INFO")
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Data loading utilities
-# ---------------------------------------------------------------------------
-
-def load_topics(path: Path, n: int | None) -> list[dict]:
-    topics = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                topics.append(json.loads(line))
-    if n is not None:
-        topics = topics[:n]
-    logger.info(f"Loaded {len(topics)} topics from {path}")
-    return topics
-
-
-def load_qrels(path: Path) -> dict[str, dict[str, int]]:
-    """Parse TREC qrels -> {topic_id: {answer_id: label}}."""
-    qrels: dict[str, dict[str, int]] = defaultdict(dict)
-    with open(path) as f:
-        for line in f:
-            parts = line.strip().split()
-            if len(parts) < 4:
-                continue
-            topic_id, _, doc_id, label = parts[0], parts[1], parts[2], parts[3]
-            qrels[topic_id][doc_id] = int(label)
-    logger.info(f"Loaded qrels for {len(qrels)} topics from {path}")
-    return dict(qrels)
-
-
-def build_answer_lookup(path: Path) -> dict[str, tuple[str, int]]:
-    """Stream answers.jsonl -> {answer_id: (body_text, score)}.
-
-    This streams the full 2 GB file once and holds the result in RAM.
-    ~30 s on first run; stays in memory for the duration of the run.
-    """
-    logger.info(f"Building answer lookup from {path} (streaming ~2 GB, ~30 s)...")
-    lookup: dict[str, tuple[str, int]] = {}
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            obj = json.loads(line)
-            answer_id = str(obj.get("id", ""))
-            body_text = obj.get("body_text", "")
-            score = int(obj.get("score", 0))
-            if answer_id:
-                lookup[answer_id] = (body_text, score)
-    logger.info(f"Answer lookup built: {len(lookup):,} answers")
-    return lookup
-
-
-def select_ground_truth(
-    topic_id: str,
-    qrels: dict[str, dict[str, int]],
-    answer_lookup: dict[str, tuple[str, int]],
-    strategy: str = "top_scored",
-) -> tuple[str | None, str | None, int | None]:
-    """Select a single reference answer for a topic.
-
-    Strategy 'top_scored':
-      1. Among judged answer_ids for this topic, take the highest relevance label (3→2→1).
-      2. Among those at the highest label, pick the one with the highest SE community score.
-      3. Tiebreak: highest numeric answer_id (most recent).
-
-    Returns:
-        (body_text, answer_id, se_score) or (None, None, None) if no judged answer found.
-    """
-    topic_qrels = qrels.get(topic_id, {})
-    if not topic_qrels:
-        return None, None, None
-
-    # Find highest relevance label with at least one judged answer in the lookup
-    for label in (3, 2, 1):
-        candidates = [
-            aid for aid, lbl in topic_qrels.items()
-            if lbl == label and aid in answer_lookup
-        ]
-        if not candidates:
-            continue
-        # Pick by highest SE score, then highest answer_id
-        best = max(candidates, key=lambda aid: (answer_lookup[aid][1], int(aid)))
-        body_text, se_score = answer_lookup[best]
-        return body_text, best, se_score
-
-    return None, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -245,74 +149,21 @@ def run_experiment(args: argparse.Namespace) -> int:
 
     logger.info(f"Run: {run_name} | Phase: {config.phase} | n_topics: {n_topics or 'all'}")
 
-    # Load data
-    topics_path = Path(config.topics_path) if not Path(config.topics_path).is_absolute() \
-        else Path(config.topics_path)
-    topics = load_topics(topics_path, n_topics)
-
     if args.dry_run:
+        topics = load_topics(Path(config.topics_path), n_topics)
         _print_dry_run(config, topics)
         return 0
 
-    qrels_path = Path(config.qrels_path) if not Path(config.qrels_path).is_absolute() \
-        else Path(config.qrels_path)
-    answers_path = Path(config.answers_path) if not Path(config.answers_path).is_absolute() \
-        else Path(config.answers_path)
-
-    qrels = load_qrels(qrels_path)
-    answer_lookup = build_answer_lookup(answers_path)
-
-    # Build ground truth for each topic
-    gt_map: dict[str, tuple[str | None, str | None, int | None]] = {}
-    for topic in topics:
-        tid = topic["topic_id"]
-        gt_map[tid] = select_ground_truth(tid, qrels, answer_lookup, config.ground_truth_strategy)
-    n_with_gt = sum(1 for v in gt_map.values() if v[0] is not None)
-    logger.info(f"Ground truth available for {n_with_gt}/{len(topics)} topics")
-
-    # Build prompts
-    template = get_template(config.prompt_template_version)
-    context_source = build_context_source(config.context_source)
-
-    messages_list: list[list[dict]] = []
-    for topic in topics:
-        contexts = context_source.get_contexts(topic)
-        question = topic["title"] + "\n\n" + topic["question"]
-        messages = template.render(question, contexts)
-        messages_list.append(messages)
-
     # W&B init
-    if not args.dry_run:
-        wandb.init(
-            project="one-last-run",
-            name=run_name,
-            group=f"C:{config.phase}",
-            tags=[config.phase, config.generator.model.split("/")[-1]],
-            config=config.model_dump(),
-        )
+    wandb.init(
+        project="one-last-run",
+        name=run_name,
+        group="track C",
+        tags=[config.phase, config.generator.model.split("/")[-1]],
+        config=config.model_dump(),
+    )
 
-    # === GENERATION PHASE ===
-    logger.info("=== GENERATION PHASE ===")
-    generator = build_generator(config.generator)
-    answers = generator.generate_batch(messages_list)
-    generator.unload()
-
-    # Build RagasSamples
-    samples: list[RagasSample] = []
-    for topic, answer in zip(topics, answers):
-        tid = topic["topic_id"]
-        gt_text, gt_aid, gt_score = gt_map.get(tid, (None, None, None))
-        question = topic["title"] + "\n\n" + topic["question"]
-        contexts = context_source.get_contexts(topic)
-        samples.append(RagasSample(
-            topic_id=tid,
-            question=question,
-            answer=answer,
-            contexts=contexts,
-            ground_truth=gt_text,
-            ground_truth_answer_id=gt_aid,
-            ground_truth_score=gt_score,
-        ))
+    samples, template, n_topics_loaded, n_with_gt = build_generation_samples(config, n_topics)
 
     # === EVALUATION PHASE ===
     logger.info("=== RAGAS EVALUATION PHASE ===")
@@ -331,7 +182,7 @@ def run_experiment(args: argparse.Namespace) -> int:
     aggregate = evaluator.aggregate(per_sample_results)
     aggregate["run_name"] = run_name
     aggregate["phase"] = config.phase
-    aggregate["n_topics"] = len(topics)
+    aggregate["n_topics"] = n_topics_loaded
     aggregate["n_topics_with_ground_truth"] = n_with_gt
 
     # === WRITE RESULTS ===
@@ -371,13 +222,31 @@ def run_experiment(args: argparse.Namespace) -> int:
     logger.info(f"Aggregate results written to {agg_path}")
 
     # W&B logging
-    if not args.dry_run:
-        wandb.log({
-            **{k: v for k, v in aggregate.items() if isinstance(v, (int, float))},
-            "results_path": str(jsonl_path),
-            "template_sha256": template.sha256,
-        })
-        wandb.finish()
+    numeric_aggregate = {k: v for k, v in aggregate.items() if isinstance(v, (int, float))}
+    wandb.log({
+        **numeric_aggregate,
+        "results_path": str(jsonl_path),
+        "template_sha256": template.sha256,
+    })
+
+    metrics_table = wandb.Table(
+        columns=["Metric", "Value"],
+        data=[[k, v] for k, v in sorted(numeric_aggregate.items())],
+    )
+    per_topic_table = wandb.Table(
+        columns=["topic_id", "answer", "ground_truth", *sorted(per_sample_results[0].keys())]
+        if per_sample_results else ["topic_id", "answer", "ground_truth"],
+        data=[
+            [sample.topic_id, sample.answer, sample.ground_truth,
+             *[metrics[k] for k in sorted(metrics.keys())]]
+            for sample, metrics in zip(samples, per_sample_results)
+        ],
+    )
+    wandb.log({
+        "metrics_table": metrics_table,
+        "per_topic_table": per_topic_table,
+    })
+    wandb.finish()
 
     # Print headroom report for this run
     print_headroom_report([aggregate])

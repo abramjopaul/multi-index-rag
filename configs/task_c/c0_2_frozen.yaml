@@ -1,0 +1,54 @@
+# C0.2 — FROZEN generation config. Do not edit in place; changes here would
+# silently alter every downstream C1/C-Oracle result. If something must
+# change, create a new c0_2_frozen_v2.yaml and re-run C0.1/C0.3 against it.
+#
+# Fields future C1/C-Oracle configs MUST copy verbatim from this file:
+#   generator: (model, revision, dtype, quantization, backend, decoding)
+#   prompt_template_version
+#   ragas: (backend, model, api_key_env, rpm_limit, embedding_model, metrics, n_repeats)
+#
+# Fields every downstream config is expected to vary:
+#   run_name, phase, experiment_name, context_source, topics_path, n_topics
+
+run_name: "c0_2_frozen"
+phase: "C0.2"
+
+context_source:
+  type: "no_rag"
+
+generator:
+  model: "Qwen/Qwen2.5-3B-Instruct"
+  revision: "aa8e72537993ba99e69dfaafa59ed015b17504d1"   # pinned main, as of 2024-09-25 (looked up 2026-07-14)
+  dtype: "bfloat16"
+  quantization: null
+  backend: "vllm"
+  decoding:
+    temperature: 0.0
+    top_p: 1.0
+    max_new_tokens: 512
+    seed: 42
+
+prompt_template_version: "v1"   # sha256: 7c896400d7f2947ef1516f9de00b2b62043ab3eeffaf1a358aa3498e8657821f
+
+topics_path: "data/processed/topics/topics.jsonl"
+qrels_path: "data/raw/qrels/qrel_task1_2022_official.tsv"
+answers_path: "data/processed/collection/answers.jsonl"
+
+ground_truth_strategy: "top_scored"
+
+ragas:
+  backend: "gemini"
+  model: "gemini-flash-lite-latest"
+  api_key_env: "GEMINI_API_KEY"
+  rpm_limit: 10
+  embedding_model: "sentence-transformers/all-mpnet-base-v2"
+  metrics:
+    - "answer_relevance"
+    - "answer_correctness"
+    - "semantic_similarity"
+    - "rouge_l"
+  n_repeats: 1
+
+n_topics: null   # set to 5 for fast smoke tests: --n-topics 5
+
+experiment_name: "C0.2 Frozen Generation Config"

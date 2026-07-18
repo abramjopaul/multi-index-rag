@@ -51,6 +51,7 @@ class VLLMGenerator(Generator):
         dtype: str = "bfloat16",
         quantization: str | None = None,
         decoding=None,
+        max_model_len: int | None = None,
     ):
         try:
             from vllm import LLM, SamplingParams
@@ -62,7 +63,7 @@ class VLLMGenerator(Generator):
 
         logger.info(
             f"Loading vLLM model: {model} (revision={revision}, dtype={dtype}, "
-            f"quantization={quantization})"
+            f"quantization={quantization}, max_model_len={max_model_len})"
         )
         self._llm = LLM(
             model=model,
@@ -71,6 +72,7 @@ class VLLMGenerator(Generator):
             quantization=quantization,
             seed=decoding.seed if decoding else 42,
             trust_remote_code=True,
+            max_model_len=max_model_len,
         )
 
         dec = decoding
@@ -200,6 +202,7 @@ def build_generator(config) -> Generator:
             dtype=config.dtype,
             quantization=config.quantization,
             decoding=config.decoding,
+            max_model_len=config.max_model_len,
         )
     elif config.backend == "hf":
         return HFGenerator(
