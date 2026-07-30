@@ -14,6 +14,10 @@
 # Data — too large for git
 data/
 
+# Track V: judge cache and result artifacts — too large for git
+.cache/
+results/
+
 # Weights & Biases logs
 wandb/
 
