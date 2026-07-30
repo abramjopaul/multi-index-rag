@@ -27,11 +27,26 @@ TOPICS_FORMULAS_SLT = TOPICS_FORMULA_DIR / "Topics_Formulas_SLT.V0.1.tsv"
 
 # Qrels paths
 QRELS_DIR = DATA_RAW / "qrels"
+QREL_TASK1_2020_ALL = QRELS_DIR / "qrel_task1_2020_all"
+QREL_TASK1_2021_ALL = QRELS_DIR / "qrel_task1_2021_all.tsv"
 QREL_TASK1_2022_ADDITIONAL = QRELS_DIR / "qrel_task1_2022_additional.tsv"
 QREL_TASK1_2022_ALL = QRELS_DIR / "qrel_task1_2022_all.tsv"
 QREL_TASK1_2022_OFFICIAL = QRELS_DIR / "qrel_task1_2022_official.tsv"
 QREL_TASK2_2021_ALL = QRELS_DIR / "qrel_task2_2021_all.tsv"
 QREL_TASK2_2022_OFFICIAL = QRELS_DIR / "qrel_task2_2022_official.tsv"
+
+# Track V: ARQMath Task 1 topic XML per year (title + question text for the judge)
+TOPICS_TASK1_2020_XML = TOPICS_DIR / "Topics_Task1_2020_V1.1.xml"
+TOPICS_TASK1_2021_XML = TOPICS_DIR / "Topics_Task1_2021_V1.1.xml"
+TOPICS_TASK1_2022_XML = TOPICS_DIR / "Topics_Task1_2022_V0.1.xml"
+
+# Track V: official ARQMath participant system runs, for Kendall's tau / Spearman's
+# rho (system-ranking preservation under judge vs human qrels). One subdirectory per
+# year; only years with a supplied runs dir can compute tau/rho.
+ARQMATH_RUNS_DIR = DATA_DIR / "runs"
+ARQMATH_2020_RUNS_DIR = ARQMATH_RUNS_DIR / "arqmath-2020-runs"
+ARQMATH_2021_RUNS_DIR = ARQMATH_RUNS_DIR / "arqmath-2021-runs"
+ARQMATH_2022_RUNS_DIR = ARQMATH_RUNS_DIR / "arqmath-2022-runs"
 
 # Task 2 topics XML
 TOPICS_TASK2_XML = DATA_RAW / "topics" / "Topics_Task2_2022_V0.1.xml"
@@ -85,7 +100,14 @@ CONFIGS_DIR = PROJECT_ROOT / "configs"
 EXPERIMENTS_CONFIG_DIR = CONFIGS_DIR / "experiments"
 PROMPTS_CONFIG_DIR = CONFIGS_DIR / "prompts"
 TASK_C_CONFIG_DIR = CONFIGS_DIR / "task_c"
+EVAL_CONFIG_DIR = CONFIGS_DIR / "eval"
 FORMULA_CONFIG_PATH = CONFIGS_DIR / "formula_indexing.yaml"
 
 # Track C: generation + RAGAS evaluation outputs
 TASK_C_RUNS_DIR = RUNS_DIR / "task_c"
+
+# Track V: judge validation outputs (new top-level results/ dir, distinct from
+# data/runs/ — matches the track_v_implementation_plan.md convention)
+RESULTS_DIR = PROJECT_ROOT / "results"
+RESULTS_TRACK_V_DIR = RESULTS_DIR / "track_v"
+JUDGE_CACHE_DIR = PROJECT_ROOT / ".cache" / "judge"
