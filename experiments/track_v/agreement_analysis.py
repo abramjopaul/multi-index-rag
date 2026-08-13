@@ -47,6 +47,8 @@ from sklearn.metrics import cohen_kappa_score, confusion_matrix  # noqa: E402
 from multirag.config.judge_config import JudgeConfigManager  # noqa: E402
 from multirag.config.path_configs import (
     ARQMATH_2020_RUNS_DIR,  # noqa: E402
+    ARQMATH_2021_RUNS_DIR,
+    ARQMATH_2022_RUNS_DIR,
     EVAL_CONFIG_DIR,
     QREL_TASK1_2020_ALL,
     QREL_TASK1_2021_ALL,
@@ -64,7 +66,11 @@ _YEAR_TO_HUMAN_QRELS = {
     "2021": QREL_TASK1_2021_ALL,
     "2022": QREL_TASK1_2022_ALL,
 }
-_DEFAULT_RUNS_DIRS = {"2020": ARQMATH_2020_RUNS_DIR}
+_DEFAULT_RUNS_DIRS = {
+    "2020": ARQMATH_2020_RUNS_DIR,
+    "2021": ARQMATH_2021_RUNS_DIR,
+    "2022": ARQMATH_2022_RUNS_DIR,
+}
 
 
 def _load_paired_labels(path: Path) -> list[dict]:
@@ -139,6 +145,31 @@ def label_agreement(paired: list[dict]) -> dict:
         ),
     }
     return result
+
+
+def _metrics_table_rows(
+    agreement_block: dict, ranking_block: dict | None
+) -> list[dict]:
+    """One row per metric for a given bucket (a single year, or the overall
+    combined bucket) -- used to log metrics_<bucket> W&B tables.
+    """
+    if agreement_block.get("status", "").startswith("SKIPPED"):
+        return [{"metric": "status", "value": agreement_block["status"]}]
+
+    rows = [
+        {"metric": "n_pairs", "value": agreement_block["n_pairs"]},
+        {"metric": "n_parse_fail", "value": agreement_block["n_parse_fail"]},
+        {"metric": "kappa_graded", "value": agreement_block["graded"]["kappa"]},
+        {
+            "metric": "weighted_kappa_graded",
+            "value": agreement_block["graded"]["weighted_kappa"],
+        },
+        {"metric": "kappa_binary", "value": agreement_block["binary"]["kappa"]},
+    ]
+    if ranking_block is not None and ranking_block.get("status") == "OK":
+        rows.append({"metric": "kendall_tau", "value": ranking_block["kendall_tau"]})
+        rows.append({"metric": "spearman_rho", "value": ranking_block["spearman_rho"]})
+    return rows
 
 
 def _merge_judge_qrels(
@@ -268,11 +299,26 @@ def main() -> int:
     config = JudgeConfigManager.from_yaml(args.config)
     paired = _load_paired_labels(Path(args.paired_labels))
 
-    agreement = label_agreement(paired)
     runs_dirs = _parse_runs_dir_args(args.participant_runs_dir)
     ranking = system_ranking_preservation(paired, runs_dirs)
 
-    output = {"label_agreement": agreement, "system_ranking_preservation": ranking}
+    # Label agreement: one "overall" bucket (all years combined) plus one
+    # bucket per year -- a year with zero pairs (not judged yet) is reported
+    # SKIPPED, mirroring system_ranking_preservation's existing pattern for
+    # missing participant runs, rather than fabricated or silently omitted.
+    agreement_by_bucket = {"overall": label_agreement(paired)}
+    for year in ("2020", "2021", "2022"):
+        year_paired = [p for p in paired if p.get("year") == year]
+        agreement_by_bucket[year] = (
+            label_agreement(year_paired)
+            if year_paired
+            else {"status": "SKIPPED (no pairs for this year)"}
+        )
+
+    output = {
+        "label_agreement": agreement_by_bucket,
+        "system_ranking_preservation": ranking,
+    }
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
@@ -281,20 +327,24 @@ def main() -> int:
     print(f"\n{'=' * 60}")
     print("Track V agreement analysis")
     print(f"{'=' * 60}")
-    print(
-        f"  n pairs: {agreement['n_pairs']} (parse fail: {agreement['n_parse_fail']})"
-    )
-    print(f"  Graded kappa:          {agreement['graded']['kappa']}")
-    print(f"  Graded weighted kappa: {agreement['graded']['weighted_kappa']}")
-    print(f"  Binary kappa:          {agreement['binary']['kappa']}")
+    for bucket in ("overall", "2020", "2021", "2022"):
+        a = agreement_by_bucket[bucket]
+        if a.get("status", "").startswith("SKIPPED"):
+            print(f"  [{bucket}] {a['status']}")
+            continue
+        print(
+            f"  [{bucket}] n={a['n_pairs']} (parse fail: {a['n_parse_fail']}) "
+            f"kappa={a['graded']['kappa']:.4f} weighted_kappa="
+            f"{a['graded']['weighted_kappa']:.4f} binary_kappa={a['binary']['kappa']:.4f}"
+        )
     for year, r in ranking.items():
         if r["status"] == "OK":
             print(
-                f"  {year}: tau={r['kendall_tau']:.4f} rho={r['spearman_rho']:.4f} "
+                f"  [{year}] tau={r['kendall_tau']:.4f} rho={r['spearman_rho']:.4f} "
                 f"(n_systems={r['n_systems']})"
             )
         else:
-            print(f"  {year}: {r['status']}")
+            print(f"  [{year}] {r['status']}")
     print(f"Written to {output_path}")
     print(f"{'=' * 60}\n")
 
@@ -315,40 +365,44 @@ def main() -> int:
         run_name=meta_row.get("run_name", "V-agreement-analysis"),
         run_id=meta_row.get("wandb_run_id"),
     )
-    metrics_to_log = {
-        "agreement/kappa_graded": agreement["graded"]["kappa"],
-        "agreement/kappa_weighted_graded": agreement["graded"]["weighted_kappa"],
-        "agreement/kappa_binary": agreement["binary"]["kappa"],
-        "agreement/n_parse_fail": agreement["n_parse_fail"],
-    }
+    metrics_to_log = {}
+    for bucket in ("overall", "2020", "2021", "2022"):
+        a = agreement_by_bucket[bucket]
+        if a.get("status", "").startswith("SKIPPED"):
+            continue
+        metrics_to_log[f"agreement/{bucket}/kappa_graded"] = a["graded"]["kappa"]
+        metrics_to_log[f"agreement/{bucket}/kappa_weighted_graded"] = a["graded"][
+            "weighted_kappa"
+        ]
+        metrics_to_log[f"agreement/{bucket}/kappa_binary"] = a["binary"]["kappa"]
+        metrics_to_log[f"agreement/{bucket}/n_parse_fail"] = a["n_parse_fail"]
     for year, r in ranking.items():
         if r["status"] == "OK":
             metrics_to_log[f"ranking/{year}_kendall_tau"] = r["kendall_tau"]
             metrics_to_log[f"ranking/{year}_spearman_rho"] = r["spearman_rho"]
     exp_logger.log_metrics(metrics_to_log)
 
-    if agreement["graded"]["confusion_matrix"] is not None:
-        human_graded_full = [
-            p["human_label"] for p in paired if p["judge_label"] is not None
-        ]
-        judge_graded_full = [
-            p["judge_label"] for p in paired if p["judge_label"] is not None
-        ]
-        exp_logger.log_confusion_matrix(
-            "confusion_matrix_graded",
-            human_graded_full,
-            judge_graded_full,
-            labels=[0, 1, 2, 3],
-        )
-        human_bin_full = [p["human_bin"] for p in paired if p["judge_bin"] is not None]
-        judge_bin_full = [p["judge_bin"] for p in paired if p["judge_bin"] is not None]
-        exp_logger.log_confusion_matrix(
-            "confusion_matrix_binary", human_bin_full, judge_bin_full, labels=[0, 1]
+    # Confusion matrices are computed and saved to agreement_analysis.json
+    # (the source of truth) regardless; intentionally not mirrored into W&B
+    # as tables/charts -- kept the run's logging to the scalar metrics and
+    # the full paired_labels table, which is where disagreements are
+    # actually inspected.
+
+    # One metrics table per year + one overall -- the user's explicit ask,
+    # so each bucket's kappa/weighted-kappa/binary-kappa/tau/rho is browsable
+    # as its own small table rather than only as scalars.
+    for bucket in ("overall", "2020", "2021", "2022"):
+        exp_logger.log_table(
+            f"metrics_{bucket}",
+            _metrics_table_rows(agreement_by_bucket[bucket], ranking.get(bucket)),
         )
 
     exp_logger.log_table(
         "segment_breakdown",
-        [{"segment": seg, **stats} for seg, stats in agreement["segments"].items()],
+        [
+            {"segment": seg, **stats}
+            for seg, stats in agreement_by_bucket["overall"]["segments"].items()
+        ],
     )
     # Intentionally no finish() here -- report.py closes the run.
 

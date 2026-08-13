@@ -22,6 +22,14 @@ from abc import ABC, abstractmethod
 class PromptTemplate(ABC):
     version: str
 
+    # Canonical refusal string instructed by this template, or None if the
+    # template has no refusal instruction (e.g. open-book no-RAG templates).
+    # Metadata about the frozen template text, not part of the text itself --
+    # exposing it here (rather than hardcoding it in a refusal-detection
+    # module) keeps refusal detection from drifting out of sync with
+    # whatever the template actually instructs.
+    refusal_phrase: str | None = None
+
     @abstractmethod
     def render(self, question: str, contexts: list[str]) -> list[dict]:
         """Return a list of chat message dicts (role/content pairs).
@@ -93,6 +101,7 @@ class PromptTemplateV2(PromptTemplate):
     """
 
     version = "v2"
+    refusal_phrase = "The provided context does not contain enough information to answer this question."
 
     @property
     def _system_template(self) -> str:

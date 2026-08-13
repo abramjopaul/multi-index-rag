@@ -17,7 +17,6 @@ import argparse
 import csv
 import json
 import logging
-import random
 import sys
 from pathlib import Path
 
@@ -29,15 +28,10 @@ sys.path.insert(
 from logging_config import configure_logging  # noqa: E402
 
 from multirag.config.judge_config import JudgeConfigManager  # noqa: E402
-from multirag.config.path_configs import (
-    EVAL_CONFIG_DIR,  # noqa: E402
-    RESULTS_TRACK_V_DIR,
-)
-from multirag.eval.schema import (
-    CSV_COLUMNS,
-    PairedLabel,  # noqa: E402
-    paired_label_to_csv_row,
-)
+from multirag.config.path_configs import EVAL_CONFIG_DIR  # noqa: E402
+from multirag.config.path_configs import RESULTS_TRACK_V_DIR
+from multirag.eval.schema import PairedLabel  # noqa: E402
+from multirag.eval.schema import CSV_COLUMNS, paired_label_to_csv_row
 from multirag.eval.wandb_logger import ExperimentLogger  # noqa: E402
 
 configure_logging(level="INFO")
@@ -51,6 +45,31 @@ def _load_jsonl(path: Path) -> list[dict]:
             if line.strip():
                 rows.append(json.loads(line))
     return rows
+
+
+def _write_paired_files(
+    paired: list[PairedLabel], jsonl_path: Path, csv_path: Path
+) -> None:
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(jsonl_path, "w") as f:
+        for p in paired:
+            f.write(json.dumps(p.to_dict(), ensure_ascii=False) + "\n")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        writer.writeheader()
+        for p in paired:
+            writer.writerow(paired_label_to_csv_row(p))
+
+
+def _infer_year(qrel_source: str) -> str | None:
+    """Same substring-match pattern as build_validation_set.py's
+    _infer_topics_xml -- qrel_source is the qrel filename, e.g.
+    "qrel_task1_2020_all", which unambiguously names its year.
+    """
+    for year in ("2020", "2021", "2022"):
+        if year in qrel_source:
+            return year
+    return None
 
 
 def build_paired_labels(
@@ -98,6 +117,7 @@ def build_paired_labels(
                 question=row["question"],
                 answer_text=row["answer_text"],
                 judge_raw_response=judgement.get("raw_response", ""),
+                year=_infer_year(row.get("qrel_source", "")),
             )
         )
 
@@ -147,17 +167,25 @@ def main() -> int:
     )
 
     output_jsonl = Path(args.output_jsonl)
-    output_jsonl.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_jsonl, "w") as f:
-        for p in paired:
-            f.write(json.dumps(p.to_dict(), ensure_ascii=False) + "\n")
-
     output_csv = Path(args.output_csv)
-    with open(output_csv, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-        writer.writeheader()
-        for p in paired:
-            writer.writerow(paired_label_to_csv_row(p))
+    _write_paired_files(paired, output_jsonl, output_csv)
+
+    # Split by year (from validation_set's qrel_source, threaded through as
+    # PairedLabel.year) -- only years actually present get written, no empty
+    # placeholder files for years not judged yet.
+    by_year: dict[str, list[PairedLabel]] = {}
+    for p in paired:
+        if p.year:
+            by_year.setdefault(p.year, []).append(p)
+
+    year_paths: dict[str, tuple[Path, Path]] = {}
+    for year, rows in sorted(by_year.items()):
+        year_jsonl = output_jsonl.with_name(
+            f"{output_jsonl.stem}_{year}{output_jsonl.suffix}"
+        )
+        year_csv = output_csv.with_name(f"{output_csv.stem}_{year}{output_csv.suffix}")
+        _write_paired_files(rows, year_jsonl, year_csv)
+        year_paths[year] = (year_jsonl, year_csv)
 
     print(f"\n{'=' * 60}")
     print("Track V paired labels")
@@ -166,8 +194,18 @@ def main() -> int:
     print(f"  parse failures:     {n_parse_fail}")
     print(f"  graded agreement:   {graded_agreement:.4f} (of {n_scored} scored pairs)")
     print(f"  binary agreement:   {binary_agreement:.4f} (of {n_scored} scored pairs)")
+    print(
+        "  per-year:           "
+        + (
+            ", ".join(f"{y}={len(rows)}" for y, rows in sorted(by_year.items()))
+            or "(none)"
+        )
+    )
     print(f"Written to {output_jsonl}")
     print(f"Written to {output_csv}")
+    for year, (yj, yc) in sorted(year_paths.items()):
+        print(f"Written to {yj}")
+        print(f"Written to {yc}")
     print(f"{'=' * 60}\n")
 
     # --- W&B: resume the run opened by run_judge_over_validation.py -------
@@ -185,32 +223,27 @@ def main() -> int:
             "paired_labels/binary_agreement": binary_agreement,
         }
     )
-    disagreements = [
-        p for p in paired if p.judge_label is not None and not p.agree_graded
-    ]
-    agreements = [p for p in paired if p.judge_label is not None and p.agree_graded]
-    sample_size = min(50, len(agreements))
-    sample = disagreements + (
-        random.sample(agreements, sample_size) if sample_size else []
-    )
+    # Log the FULL paired-label set as one table (compact columns, matching
+    # paired_labels.csv exactly) -- not a disagreement-biased sample. A
+    # disagreements-plus-50-agreements sample looks overwhelmingly negative
+    # regardless of the real agreement rate (e.g. 11,773 disagreements + 50
+    # agreements reads as "almost nothing agrees" even at 70% real
+    # agreement) -- every row here is real, so the table is exactly as
+    # representative as the aggregate numbers above. Plus one table + one
+    # file pair per year with data, so 2020/2021/2022 can each be browsed or
+    # downloaded independently.
     exp_logger.log_table(
-        "paired_labels_sample",
-        [
-            {
-                "topic_id": p.topic_id,
-                "answer_id": p.answer_id,
-                "human_label": p.human_label,
-                "judge_label": p.judge_label,
-                "agree_graded": p.agree_graded,
-                "delta": p.delta,
-                "question": p.question[:300],
-                "answer_text": p.answer_text[:300],
-            }
-            for p in sample
-        ],
+        "paired_labels_overall", [paired_label_to_csv_row(p) for p in paired]
     )
-    exp_logger.log_artifact(output_jsonl, artifact_type="paired_labels")
-    exp_logger.log_artifact(output_csv, artifact_type="paired_labels")
+    exp_logger.save_file(output_jsonl)
+    exp_logger.save_file(output_csv)
+    for year, rows in sorted(by_year.items()):
+        exp_logger.log_table(
+            f"paired_labels_{year}", [paired_label_to_csv_row(p) for p in rows]
+        )
+        yj, yc = year_paths[year]
+        exp_logger.save_file(yj)
+        exp_logger.save_file(yc)
     # Intentionally no finish() here -- agreement_analysis.py / report.py
     # continue logging into this same run; report.py closes it.
 

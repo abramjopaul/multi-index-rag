@@ -29,7 +29,20 @@ class JudgeSettings(BaseModel):
 class ExecutionConfig(BaseModel):
     mode: str = "batch"  # "batch" | "sync"
     batch_poll_seconds: int = 60
-    batch_max_in_flight: int = 4
+    # Empirically determined (live API, 2026-07-30): the TPM quota applies cumulatively
+    # to chunks submitted back-to-back in a burst, not just per individual chunk --
+    # 2x3,000-pair chunks submitted in immediate succession succeeded (6,000 total), but
+    # a 3rd back-to-back submission (pushing the burst to 9,000) failed with 429, even
+    # though a single standalone 5,000-pair submission succeeds on its own. Keeping this
+    # at 1 means only one chunk is submitted per script invocation, so submissions are
+    # naturally spaced out across separate runs (each run polls to completion before
+    # exiting) instead of bursting. Only raise after re-confirming headroom empirically.
+    batch_max_in_flight: int = 1
+    # Empirically determined (live API, 2026-07-30): 5,000-request batch submissions
+    # succeed, 8,000/9,781 fail with 429 RESOURCE_EXHAUSTED (TPM quota). Default leaves
+    # comfortable headroom below the ~5,000 boundary; raise only after re-confirming
+    # against the current account's quota.
+    max_batch_chunk_size: int = 3000
     sync_max_concurrency: int = 4
     max_retries: int = 5
     retry_backoff_seconds: float = 2.0

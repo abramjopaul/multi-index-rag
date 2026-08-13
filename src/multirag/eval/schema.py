@@ -67,6 +67,9 @@ class PairedLabel:
     question: str  # for eyeballing disagreements
     answer_text: str
     judge_raw_response: str  # so a disagreement can be inspected without a re-run
+    year: str | None = (
+        None  # "2020" | "2021" | "2022", from validation_set's qrel_source
+    )
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -80,6 +83,7 @@ class PairedLabel:
 CSV_COLUMNS = [
     "topic_id",
     "answer_id",
+    "year",
     "human_label",
     "judge_label",
     "human_bin",

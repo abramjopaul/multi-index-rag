@@ -10,13 +10,13 @@ import pytrec_eval
 
 from multirag.indexing.base import BaseIndexer
 
-# Canonical metric set: all evaluated at k=5,10,100,1000.
+# Canonical metric set: all evaluated at k=5,10,20,100,1000.
 # bpref and map are query-level aggregates with no @k cutoff.
 _EVAL_METRICS = {
-    "ndcg_cut.5,10,100,1000",
-    "P.5,10,100,1000",
-    "recall.5,10,100,1000",
-    "map_cut.5,10,100,1000",
+    "ndcg_cut.5,10,20,100,1000",
+    "P.5,10,20,100,1000",
+    "recall.5,10,20,100,1000",
+    "map_cut.5,10,20,100,1000",
     "map",
     "bpref",
 }
@@ -25,18 +25,22 @@ _EVAL_METRICS = {
 _RENAME = {
     "ndcg_cut_5": "ndcg@5",
     "ndcg_cut_10": "ndcg@10",
+    "ndcg_cut_20": "ndcg@20",
     "ndcg_cut_100": "ndcg@100",
     "ndcg_cut_1000": "ndcg@1000",
     "P_5": "precision@5",
     "P_10": "precision@10",
+    "P_20": "precision@20",
     "P_100": "precision@100",
     "P_1000": "precision@1000",
     "recall_5": "recall@5",
     "recall_10": "recall@10",
+    "recall_20": "recall@20",
     "recall_100": "recall@100",
     "recall_1000": "recall@1000",
     "map_cut_5": "map@5",
     "map_cut_10": "map@10",
+    "map_cut_20": "map@20",
     "map_cut_100": "map@100",
     "map_cut_1000": "map@1000",
     "map": "map",
@@ -95,8 +99,6 @@ def _avg_over_queries(results: dict[str, dict[str, float]]) -> dict[str, float]:
     return {key: totals[key] / counts[key] for key in totals}
 
 
-
-
 def generate_run_file(
     indexer: BaseIndexer,
     topics_path: str | os.PathLike[str],
@@ -128,6 +130,7 @@ def generate_run_file(
         AttributeError: If indexer doesn't support batch_search.
     """
     import logging as _logging
+
     # Inline import to avoid circular dependency at module level
     from multirag.indexing.formula.faiss_fused import FormulaFAISSIndexerFused
     from multirag.indexing.formula.faiss_scalar_quantizer import (
@@ -139,6 +142,7 @@ def generate_run_file(
     # Use default FormulaSearchConfig if none provided (avoids circular import at top)
     if formula_config is None:
         from multirag.config.run_config import FormulaSearchConfig
+
         formula_config = FormulaSearchConfig()
 
     topics_path = Path(topics_path)
@@ -181,7 +185,9 @@ def generate_run_file(
                 qid_to_topic[uqid] = topic["topic_id"]
 
         if not formula_queries:
-            raise ValueError("No formulas found in topics — cannot run formula index search.")
+            raise ValueError(
+                "No formulas found in topics — cannot run formula index search."
+            )
 
         _logger.info(
             f"Strategy={formula_config.strategy}: {len(formula_queries)} formula queries "
@@ -193,7 +199,9 @@ def generate_run_file(
 
         # RRF merge: accumulate scores per (topic_id, doc_id) across formula ranked lists
         rrf_k = formula_config.rrf_k
-        topic_scores: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        topic_scores: dict[str, dict[str, float]] = defaultdict(
+            lambda: defaultdict(float)
+        )
         for uqid, hits in raw.items():
             topic_id = qid_to_topic[uqid]
             for rank, hit in enumerate(hits):
@@ -211,7 +219,9 @@ def generate_run_file(
         with open(output_path, "w") as f:
             for topic_id, doc_scores in merged.items():
                 for rank, (doc_id, score) in enumerate(doc_scores, start=1):
-                    f.write(f"{topic_id}\tQ0\t{doc_id}\t{rank}\t{score:.6f}\t{run_name}\n")
+                    f.write(
+                        f"{topic_id}\tQ0\t{doc_id}\t{rank}\t{score:.6f}\t{run_name}\n"
+                    )
 
         return
 
@@ -238,6 +248,45 @@ def generate_run_file(
                 f.write(f"{topic_id}\tQ0\t{doc_id}\t{rank}\t{score}\t{run_name}\n")
 
 
+def evaluate(
+    qrel: dict[str, dict[str, int]],
+    run: dict[str, dict[str, float]],
+) -> dict[str, float]:
+    """Evaluate an already-parsed run against an already-parsed qrels dict.
+
+    Same computation `evaluate_run` does (standard + prime/judged-only
+    variants of ndcg/precision/recall/map @5/10/20/100/1000, plus map and
+    bpref), but for in-memory dicts -- lets callers score a qrels dict built
+    on the fly (e.g. human qrels merged with judge labels for a shallow hole
+    fill) without writing it to a temp file first.
+
+    Args:
+        qrel: qid -> {doc_id: relevance_label}.
+        run: qid -> {doc_id: score}.
+
+    Returns:
+        Flat dict of averaged metric values, e.g. {"ndcg@10": 0.42, "ndcg'@10": 0.51, ...}.
+    """
+    evaluator = pytrec_eval.RelevanceEvaluator(qrel, _EVAL_METRICS, relevance_level=2)
+
+    avg_standard = _avg_over_queries(evaluator.evaluate(run))
+    avg_prime = _avg_over_queries(evaluator.evaluate(_to_judged_only(run, qrel)))
+
+    output: dict[str, float] = {}
+    for internal_key, display_name in _RENAME.items():
+        if internal_key in avg_standard:
+            output[display_name] = avg_standard[internal_key]
+        if internal_key in avg_prime:
+            # Insert apostrophe before @ if present, otherwise append
+            if "@" in display_name:
+                base, k = display_name.split("@", 1)
+                output[f"{base}'@{k}"] = avg_prime[internal_key]
+            else:
+                output[f"{display_name}'"] = avg_prime[internal_key]
+
+    return output
+
+
 def evaluate_run(
     qrels_path: str | os.PathLike[str],
     run_path: str | os.PathLike[str],
@@ -245,8 +294,8 @@ def evaluate_run(
     """Evaluate a TREC run file using pytrec_eval.
 
     Computes standard and prime (judged-only) variants of:
-      ndcg@5/10/100/1000, precision@5/10/100/1000,
-      recall@5/10/100/1000, map@5/10/100/1000, map, bpref
+      ndcg@5/10/20/100/1000, precision@5/10/20/100/1000,
+      recall@5/10/20/100/1000, map@5/10/20/100/1000, map, bpref
 
     Prime metrics (unjudged docs removed before scoring) use the same names
     with a trailing apostrophe, e.g. ndcg'@10.
@@ -272,24 +321,7 @@ def evaluate_run(
     qrel = _parse_qrels(qrels_path)
     run = _parse_run(run_path)
 
-    evaluator = pytrec_eval.RelevanceEvaluator(qrel, _EVAL_METRICS, relevance_level=2)
-
-    avg_standard = _avg_over_queries(evaluator.evaluate(run))
-    avg_prime = _avg_over_queries(evaluator.evaluate(_to_judged_only(run, qrel)))
-
-    output: dict[str, float] = {}
-    for internal_key, display_name in _RENAME.items():
-        if internal_key in avg_standard:
-            output[display_name] = avg_standard[internal_key]
-        if internal_key in avg_prime:
-            # Insert apostrophe before @ if present, otherwise append
-            if "@" in display_name:
-                base, k = display_name.split("@", 1)
-                output[f"{base}'@{k}"] = avg_prime[internal_key]
-            else:
-                output[f"{display_name}'"] = avg_prime[internal_key]
-
-    return output
+    return evaluate(qrel, run)
 
 
 def print_evaluation_report(

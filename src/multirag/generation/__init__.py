@@ -1,19 +1,22 @@
-"""Track C: generation + RAGAS evaluation layer."""
+"""Track C: local generation layer (context assembly, prompting, generator backends).
+
+ragas evaluation lives in src/multirag/eval/ (metrics_registry.py, references.py,
+generate.py, runner.py), not here -- this package only covers the generator-side
+plumbing that has no ragas dependency.
+"""
 
 from multirag.generation.context_source import ContextSource, NoRagSource, RunFileSource
-from multirag.generation.generator import Generator, HFGenerator, VLLMGenerator
+from multirag.generation.generator import Generator, GenerationMeta, HFGenerator, VLLMGenerator
 from multirag.generation.prompt_template import PromptTemplate, get_template
-from multirag.generation.ragas_eval import RagasEvaluator, RagasSample
 
 __all__ = [
     "ContextSource",
     "NoRagSource",
     "RunFileSource",
     "Generator",
+    "GenerationMeta",
     "HFGenerator",
     "VLLMGenerator",
     "PromptTemplate",
     "get_template",
-    "RagasEvaluator",
-    "RagasSample",
 ]

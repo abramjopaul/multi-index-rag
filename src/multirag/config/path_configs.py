@@ -103,11 +103,15 @@ TASK_C_CONFIG_DIR = CONFIGS_DIR / "task_c"
 EVAL_CONFIG_DIR = CONFIGS_DIR / "eval"
 FORMULA_CONFIG_PATH = CONFIGS_DIR / "formula_indexing.yaml"
 
-# Track C: generation + RAGAS evaluation outputs
-TASK_C_RUNS_DIR = RUNS_DIR / "task_c"
-
 # Track V: judge validation outputs (new top-level results/ dir, distinct from
 # data/runs/ — matches the track_v_implementation_plan.md convention)
 RESULTS_DIR = PROJECT_ROOT / "results"
 RESULTS_TRACK_V_DIR = RESULTS_DIR / "track_v"
 JUDGE_CACHE_DIR = PROJECT_ROOT / ".cache" / "judge"
+
+# Track B: re-scoring inputs (TREC run files per config) and outputs
+TRACK_B_RUNS_DIR = RUNS_DIR / "track_b"
+RESULTS_TRACK_B_DIR = RESULTS_DIR / "track_b"
+
+# Track C: generation + ragas evaluation outputs
+RESULTS_TRACK_C_DIR = RESULTS_DIR / "track_c"
