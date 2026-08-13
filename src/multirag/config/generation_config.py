@@ -5,6 +5,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 
+from multirag.config.judge_config import WandbConfig
+
 
 class ContextSourceConfig(BaseModel):
     type: str = Field(description='"no_rag" | "run_file" | "oracle"')
@@ -34,42 +36,54 @@ class GeneratorConfig(BaseModel):
     decoding: DecodingConfig = Field(default_factory=DecodingConfig)
 
 
-class RagasJudgeConfig(BaseModel):
-    backend: str = "gemini"                      # "gemini" | "vllm" | "hf"
-    model: str = "gemini-1.5-flash"
-    api_key_env: str = "GOOGLE_API_KEY"          # env var name holding the API key
-    rpm_limit: int = 14                          # requests/min (free tier: 15 RPM cap)
-    embedding_model: str = "sentence-transformers/all-mpnet-base-v2"
+class TrackCJudgeConfig(BaseModel):
+    """ragas judge settings -- see src/multirag/eval/metrics_registry.py for
+    how these drive the actual ragas LLM wrapper construction."""
+
+    model: str = "gemini-3.5-flash-lite"
+    api_key_env: str = "GEMINI_API_KEY"
+    temperature: float = 0.0
+    max_concurrency: int = 5   # bounds the asyncio semaphore in eval/runner.py
+    cache_dir: str = ".cache/track_c_judge"
     metrics: list[str] = Field(
-        default=["answer_relevance", "answer_correctness", "semantic_similarity", "rouge_l"]
+        default=[
+            "faithfulness",
+            "factual_correctness_precision",
+            "factual_correctness_recall",
+        ]
     )
-    n_repeats: int = 1
-    seed: int = 42   # forwarded to ChatGoogleGenerativeAI(seed=...) in ragas_eval.py for
-                      # judge-call reproducibility (Gemini docs this as best-effort, not guaranteed)
 
 
-class GenerationRunConfig(BaseModel):
-    run_name: str
-    phase: str = "C0.1"               # "C0.1" | "C0.2" | "C1" | "C-Oracle" | ...
-    context_source: ContextSourceConfig
+def _track_c_wandb_defaults() -> WandbConfig:
+    # Reuses judge_config.WandbConfig (same class ExperimentLogger expects,
+    # same one Track B mutates group/job_type on) rather than a parallel
+    # duplicate -- only the Track-C-specific defaults differ from V's.
+    return WandbConfig(
+        group="Track C : Generation",
+        job_type="track-c-generation",
+        tags=["C", "generation", "arqmath-3"],
+    )
+
+
+class TrackCRunConfig(BaseModel):
+    """Stable, per-experiment settings for a Track C generation+eval run.
+
+    Per-invocation knobs (--trec-file, --k, --no-rag, --qrels, --max-topics,
+    --topic-ids, --config-name) are CLI arguments in
+    experiments/track_c/generate_and_score.py, not here -- this config only
+    holds settings that should stay fixed across every config/k in a
+    comparison (generator, prompt template, judge, wandb).
+    """
+
     generator: GeneratorConfig
-    prompt_template_version: str = "v1"
-    topics_path: str
-    qrels_path: str
-    answers_path: str
-    ground_truth_strategy: str = "top_scored"  # "top_scored": highest-label then highest SE score
-    ragas: RagasJudgeConfig = Field(default_factory=RagasJudgeConfig)
-    n_topics: int | None = None        # None = all; CLI --n-topics overrides this
-    # Filter topics to ground-truth-having ones BEFORE truncating to n_topics
-    # (see sample_builder.build_generation_samples). Off by default: run_c0_1.py's
-    # existing behavior (topics[:n_topics], no GT filtering) is unaffected.
-    require_ground_truth: bool = False
-    experiment_name: str | None = None
+    prompt_template_version: str = "v2"
+    judge: TrackCJudgeConfig = Field(default_factory=TrackCJudgeConfig)
+    wandb: WandbConfig = Field(default_factory=_track_c_wandb_defaults)
 
 
-class GenerationRunConfigManager:
+class TrackCConfigManager:
     @staticmethod
-    def from_yaml(path: str | Path) -> GenerationRunConfig:
+    def from_yaml(path: str | Path) -> TrackCRunConfig:
         with open(path) as f:
             data = yaml.safe_load(f)
-        return GenerationRunConfig(**data)
+        return TrackCRunConfig(**data)

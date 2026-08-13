@@ -37,10 +37,8 @@ sys.path.insert(
 from logging_config import configure_logging  # noqa: E402
 
 from multirag.config.judge_config import JudgeConfigManager  # noqa: E402
-from multirag.config.path_configs import (
-    EVAL_CONFIG_DIR,  # noqa: E402
-    RESULTS_TRACK_V_DIR,
-)
+from multirag.config.path_configs import EVAL_CONFIG_DIR  # noqa: E402
+from multirag.config.path_configs import RESULTS_TRACK_V_DIR
 from multirag.eval.wandb_logger import ExperimentLogger  # noqa: E402
 
 configure_logging(level="INFO")
@@ -88,7 +86,8 @@ def compute_verdict(ranking: dict) -> tuple[str, dict]:
 
 
 def render_markdown(agreement_data: dict, verdict: str, verdict_detail: dict) -> str:
-    la = agreement_data["label_agreement"]
+    la_by_bucket = agreement_data["label_agreement"]
+    la = la_by_bucket["overall"]
     ranking = agreement_data["system_ranking_preservation"]
 
     lines = [
@@ -159,6 +158,28 @@ def render_markdown(agreement_data: dict, verdict: str, verdict_detail: dict) ->
         f"Multi-approach-flagged topics: n={ma['n']}, graded agreement="
         f"{ma['graded_agreement']}"
     )
+    lines.append("")
+
+    lines.append("## Per-year label agreement")
+    lines.append("")
+    lines.append(
+        "| bucket | n pairs | parse fail | kappa | weighted kappa | binary kappa | "
+        "Kendall tau | Spearman rho |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for bucket in ("overall", "2020", "2021", "2022"):
+        b = la_by_bucket.get(bucket, {"status": "SKIPPED (no data)"})
+        if b.get("status", "").startswith("SKIPPED"):
+            lines.append(f"| {bucket} | - | - | - | - | - | - | - |")
+            continue
+        r = ranking.get(bucket)
+        tau_str = f"{r['kendall_tau']:.4f}" if r and r.get("status") == "OK" else "-"
+        rho_str = f"{r['spearman_rho']:.4f}" if r and r.get("status") == "OK" else "-"
+        lines.append(
+            f"| {bucket} | {b['n_pairs']} | {b['n_parse_fail']} | "
+            f"{b['graded']['kappa']:.4f} | {b['graded']['weighted_kappa']:.4f} | "
+            f"{b['binary']['kappa']:.4f} | {tau_str} | {rho_str} |"
+        )
     lines.append("")
 
     lines.append("## System-ranking preservation")
@@ -248,7 +269,7 @@ def main() -> int:
         run_id=meta_row.get("wandb_run_id"),
     )
     try:
-        la = agreement_data["label_agreement"]
+        la = agreement_data["label_agreement"]["overall"]
         exp_logger.log_metrics(
             {
                 "final/kappa_graded": la["graded"]["kappa"],
@@ -257,8 +278,8 @@ def main() -> int:
                 "final/parse_fail_count": la["n_parse_fail"],
             }
         )
-        exp_logger.log_artifact(output_jsonl, artifact_type="agreement_report")
-        exp_logger.log_artifact(output_md, artifact_type="agreement_report")
+        exp_logger.save_file(output_jsonl)
+        exp_logger.save_file(output_md)
         exp_logger.set_summary("verdict", verdict)
     finally:
         exp_logger.finish()

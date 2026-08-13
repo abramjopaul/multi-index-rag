@@ -130,9 +130,34 @@ class ExperimentLogger:
             }
         )
 
+    def save_file(self, path: str | Path) -> None:
+        """Copies a file into the run's plain Files tab (runs/<id>/files/) --
+        for files you just want to browse/download directly, unlike
+        log_artifact's separate, versioned Artifacts system (which adds
+        lineage tracking most V result files don't need, and whose
+        version-by-(name, type) collision is easy to trip over -- two files
+        that happen to share a stem, e.g. paired_labels.jsonl and
+        paired_labels.csv, silently become v0/v1 of the SAME artifact instead
+        of two easily-findable files. save_file has no such collision risk.
+        """
+        if self._run is None:
+            return
+        import shutil
+
+        import wandb
+
+        path = Path(path)
+        dest = Path(wandb.run.dir) / path.name
+        shutil.copy(path, dest)
+        wandb.save(str(dest), base_path=wandb.run.dir)
+
     def log_artifact(
         self, path: str | Path, artifact_type: str, name: str | None = None
     ) -> None:
+        """Versioned Artifacts system -- use only when lineage/versioning
+        across runs is actually wanted. For "just let me download this file
+        from the run," use save_file instead.
+        """
         if self._run is None:
             return
         import wandb

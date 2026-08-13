@@ -435,7 +435,7 @@ class JudgeClient:
 
         client = self._get_genai_client()
         max_in_flight = max(1, self._config.execution.batch_max_in_flight)
-        max_chunk_size = 10_000  # sane per-job cap, independent of in-flight setting
+        max_chunk_size = self._config.execution.max_batch_chunk_size
 
         # Chunks are as large as possible (up to max_chunk_size) so a small
         # input becomes ONE job, not one job per pair. batch_max_in_flight

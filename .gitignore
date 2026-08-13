@@ -34,6 +34,8 @@ __pycache__/
 .DS_Store
 external/TangentCFT
 
+artifacts/
+
 hs_err_pid*.log
 
 media/

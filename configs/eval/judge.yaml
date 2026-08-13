@@ -15,7 +15,19 @@ judge:
 execution:
   mode: batch                      # batch | sync   (batch is the default and the whole point)
   batch_poll_seconds: 60
-  batch_max_in_flight: 4           # concurrent batch jobs
+  # Empirically determined (live API, 2026-07-30): the TPM quota applies cumulatively to
+  # chunks submitted back-to-back in a burst, not just per individual chunk -- 2x3,000-pair
+  # chunks submitted in immediate succession succeeded (6,000 total), but a 3rd back-to-back
+  # submission (pushing the burst to 9,000) failed with 429, even though a single standalone
+  # 5,000-pair submission succeeds on its own. Keeping this at 1 means only one chunk
+  # submits per script invocation, naturally spacing submissions across separate runs
+  # instead of bursting. Only raise after re-confirming headroom empirically.
+  batch_max_in_flight: 1
+  # Empirically determined (live API, 2026-07-30): 5,000-request batch submissions
+  # succeed, 8,000/9,781 fail with 429 RESOURCE_EXHAUSTED (TPM quota, ~4M tokens/min for
+  # gemini-3.5-flash-lite on this account). 3,000 leaves comfortable headroom below the
+  # ~5,000 boundary -- re-confirm against the current account's quota before raising.
+  max_batch_chunk_size: 3000
   sync_max_concurrency: 4          # only used when mode: sync (smoke tests)
   max_retries: 5
   retry_backoff_seconds: 2.0

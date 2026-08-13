@@ -146,6 +146,22 @@ def main() -> int:
     cached, remaining = client.partition_cached(pairs)
     logger.info(f"Cache: {len(cached)} hit, {len(remaining)} need labelling")
 
+    # Resume the SAME W&B run across repeated invocations of this script (a large
+    # (~39K-pair) job spans multiple invocations due to batch_max_in_flight -- without
+    # this, every invocation would open a new run and fragment the V run across dozens
+    # of separate W&B entries instead of one continuous one).
+    existing_run_id = None
+    existing_run_name = None
+    output_path_check = Path(args.output)
+    if output_path_check.exists():
+        with open(output_path_check) as f:
+            first_line = f.readline()
+            if first_line.strip():
+                candidate = json.loads(first_line)
+                if candidate.get("_meta"):
+                    existing_run_id = candidate.get("wandb_run_id")
+                    existing_run_name = candidate.get("run_name")
+
     exp_logger = ExperimentLogger(config.wandb)
     config_sha256 = sha256_file(args.config)
     manifest = build_manifest(
@@ -155,11 +171,11 @@ def main() -> int:
         config_sha256=config_sha256,
         usage=client.usage,
     )
-    run_name = (
+    run_name = existing_run_name or (
         f"V-{config.judge.model}-{config.prompt.template_path.split('/')[-1]}-"
         f"{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}"
     )
-    exp_logger.start_run(config=manifest, run_name=run_name)
+    exp_logger.start_run(config=manifest, run_name=run_name, run_id=existing_run_id)
 
     running_totals = {
         "pairs_labelled": len(cached),
