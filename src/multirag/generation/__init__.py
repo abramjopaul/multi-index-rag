@@ -5,13 +5,19 @@ generate.py, runner.py), not here -- this package only covers the generator-side
 plumbing that has no ragas dependency.
 """
 
-from multirag.generation.context_source import ContextSource, NoRagSource, RunFileSource
+from multirag.generation.context_source import (
+    ContextSource,
+    NoRagSource,
+    OracleSource,
+    RunFileSource,
+)
 from multirag.generation.generator import Generator, GenerationMeta, HFGenerator, VLLMGenerator
 from multirag.generation.prompt_template import PromptTemplate, get_template
 
 __all__ = [
     "ContextSource",
     "NoRagSource",
+    "OracleSource",
     "RunFileSource",
     "Generator",
     "GenerationMeta",

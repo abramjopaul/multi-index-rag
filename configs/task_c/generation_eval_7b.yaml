@@ -1,10 +1,10 @@
-# Track C generation + evaluation: stable settings shared across every
-# config/k in a comparison. Per-invocation knobs (--trec-file, --k, --no-rag,
-# --qrels, --max-topics, --topic-ids, --config-name) are CLI arguments to
-# experiments/track_c/generate_and_score.py, not here.
+# Track C generation + evaluation: 7B generator-scale robustness check (E6).
+# Identical to generation_eval.yaml except generator.model -- everything else
+# (prompt template, judge, wandb) stays fixed so the 3B vs 7B comparison
+# isolates model scale, not some other setting drifting between runs.
 
 generator:
-  model: "Qwen/Qwen2.5-3B-Instruct"
+  model: "Qwen/Qwen2.5-7B-Instruct"
   revision: "main"   # TODO: pin to a specific commit hash for reproducibility
   dtype: "bfloat16"
   quantization: null
@@ -17,9 +17,7 @@ generator:
   decoding:
     temperature: 0.0
     top_p: 1.0
-    max_new_tokens: 1024   # bumped from 512 -- 57/100 bm25 topics were hitting the old
-                            # ceiling mid-derivation, dragging faithfulness down as a
-                            # truncation artifact rather than a genuine grounding failure
+    max_new_tokens: 1024
     seed: 42
 
 prompt_template_version: "v2"   # RAG-only: answer strictly from context, refuse if insufficient
@@ -39,4 +37,4 @@ wandb:
   project: "one-last-run"
   group: "Track C : Generation"
   job_type: "track-c-generation"
-  tags: ["C", "generation", "arqmath-3"]
+  tags: ["C", "generation", "arqmath-3", "7b"]

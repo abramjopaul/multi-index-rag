@@ -78,7 +78,7 @@ def main() -> int:
     )
     parser.add_argument("--k", type=int, default=5, help="Retrieved docs fed as context")
     parser.add_argument(
-        "--max-reference-answers", type=int, default=10, help="Cap on High-qrels answers in the reference; NOT swept"
+        "--max-reference-answers", type=int, default=5, help="Cap on High-qrels answers in the reference; NOT swept"
     )
     parser.add_argument("--qrels", default=str(QREL_TASK1_2022_ALL))
     parser.add_argument("--topics-path", default=str(TOPICS_JSONL))
@@ -90,14 +90,38 @@ def main() -> int:
     parser.add_argument(
         "--no-rag", action="store_true", help="Ignore --trec-file, generate with zero context"
     )
+    parser.add_argument(
+        "--oracle-mode",
+        choices=["reference", "disjoint"],
+        default=None,
+        help="Ceiling experiments: ignore --trec-file, build context directly from qrels. "
+        "'reference' = context is the exact answer set used as the reference (instrument "
+        "ceiling). 'disjoint' = context is the next --k High-labelled answers ranked after "
+        "the reference (retrieval ceiling); topics without enough surplus get empty context.",
+    )
+    parser.add_argument(
+        "--prompt-template-version",
+        default=None,
+        help="Override config's prompt_template_version. --no-rag defaults to 'v1' "
+        "(open-book) unless set here -- 'v2' is RAG-only (instructed to refuse without "
+        "context) and would score near-100%% refusals if used with empty context.",
+    )
     parser.add_argument("--config", default=str(TASK_C_CONFIG_DIR / "generation_eval.yaml"))
     parser.add_argument("--output-dir", default=str(RESULTS_TRACK_C_DIR))
     args = parser.parse_args()
 
-    if not args.no_rag and not args.trec_file:
-        parser.error("--trec-file is required unless --no-rag is set")
+    n_modes = sum([bool(args.trec_file), args.no_rag, bool(args.oracle_mode)])
+    if n_modes == 0:
+        parser.error("One of --trec-file, --no-rag, or --oracle-mode is required")
+    if n_modes > 1:
+        parser.error("--trec-file, --no-rag, and --oracle-mode are mutually exclusive")
 
-    effective_k = 0 if args.no_rag else args.k
+    if args.oracle_mode == "reference":
+        effective_k = args.max_reference_answers
+    elif args.oracle_mode == "disjoint":
+        effective_k = args.k
+    else:
+        effective_k = 0 if args.no_rag else args.k
 
     config = TrackCConfigManager.from_yaml(args.config)
 
@@ -118,12 +142,27 @@ def main() -> int:
     # --- Context source (reused as-is: multirag.generation.context_source) ---
     if args.no_rag:
         context_source_config = ContextSourceConfig(type="no_rag")
+    elif args.oracle_mode:
+        context_source_config = ContextSourceConfig(
+            type="oracle", oracle_mode=args.oracle_mode, k=args.k
+        )
     else:
         context_source_config = ContextSourceConfig(
             type="run_file", run_path=args.trec_file, k=args.k
         )
-    context_source = build_context_source(context_source_config, answer_lookup=answer_lookup)
-    template = get_template(config.prompt_template_version)
+    context_source = build_context_source(
+        context_source_config,
+        answer_lookup=answer_lookup,
+        qrels=qrels,
+        max_reference_answers=args.max_reference_answers,
+    )
+    if args.prompt_template_version:
+        template_version = args.prompt_template_version
+    elif args.no_rag:
+        template_version = "v1"
+    else:
+        template_version = config.prompt_template_version
+    template = get_template(template_version)
 
     # --- Generation (reused as-is: multirag.generation.generator, additive
     # generate_batch_with_metadata) ---
@@ -164,7 +203,7 @@ def main() -> int:
             model=config.judge.model, contents=text
         ).total_tokens
 
-    scores, ref_results, usage = asyncio.run(
+    scores, ref_results, usage, n_claims = asyncio.run(
         score_all(
             generations=records,
             metrics=metrics,
@@ -178,7 +217,7 @@ def main() -> int:
         )
     )
 
-    summary = build_summary(records, scores, ref_results, usage)
+    summary = build_summary(records, scores, ref_results, usage, n_claims)
     manifest = build_manifest(
         config=config,
         prompt_sha256=template.sha256,
@@ -189,14 +228,17 @@ def main() -> int:
         max_reference_answers=args.max_reference_answers,
         trec_file=args.trec_file,
         config_name=args.config_name,
+        prompt_template_version=template_version,
     )
-    outputs = write_outputs(output_dir, scores, ref_results, manifest, summary, records)
+    outputs = write_outputs(output_dir, scores, ref_results, manifest, summary, records, n_claims)
 
     print(f"\n{'=' * 70}")
     print(f"Track C: {args.config_name} (k={effective_k})")
     print(f"{'=' * 70}")
     print(f"n_topics: {summary['n_topics']}  refusal_rate: {summary['refusal_rate']}")
     print(f"usage: {usage}")
+    if "mean_n_claims" in summary:
+        print(f"mean_n_claims: {summary['mean_n_claims']} (n={summary['n_claims_scored']})")
     for name in config.judge.metrics:
         print(
             f"  {name:<32} answering={summary.get(f'{name}_mean_answering')}  "
@@ -236,7 +278,8 @@ def main() -> int:
                     "completion_tokens": r.completion_tokens,
                     "max_new_tokens": r.max_new_tokens,
                     "hit_ceiling": r.hit_ceiling,
-                    "response_tail": r.response[-80:],
+                    "response": r.response,
+                    "n_claims": n_claims.get(r.topic_id),
                     "n_contexts": len(r.contexts),
                     "n_high_available": ref_results[r.topic_id].n_high_available,
                     "n_high_used": ref_results[r.topic_id].n_high_used,
@@ -272,6 +315,7 @@ def main() -> int:
             exp_logger.save_file(path)
         if args.trec_file:
             exp_logger.save_file(args.trec_file)
+        exp_logger.save_file(args.config)
     finally:
         exp_logger.finish()
 

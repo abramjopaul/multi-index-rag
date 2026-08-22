@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -104,19 +105,70 @@ class RunFileSource(ContextSource):
 
 
 # ---------------------------------------------------------------------------
-# Stub for a later phase — same interface, different retrieval backend.
-# Implement when C-Oracle is built; the harness never changes.
+# Ceiling experiments: build contexts directly from qrels, not a retrieval run.
 # ---------------------------------------------------------------------------
 
-# class OracleSource(ContextSource):
-#     """C-Oracle: Builds contexts from qrels at a fixed relevance level."""
-#     def __init__(self, qrels_path: str, answers_path: str,
-#                  relevance_level: int, k: int = 5): ...
-#     def get_contexts(self, topic: dict) -> list[str]: ...
+
+class OracleSource(ContextSource):
+    """Ceiling-experiment context source. Builds contexts directly from
+    qrels, not from a retrieval run file.
+
+    mode="reference": context = the exact answer_ids_used already selected
+      by references.select_references() for this topic (High, or
+      Medium-filled per its own fallback rule) -- the instrument ceiling.
+      Guarantees the context IS the reference the judge compares answers
+      against, so precision isn't testing retrieval at all -- whatever this
+      scores is the practical maximum this pipeline can read (1024-token
+      compression, ragas judge/claim-decomposition noise, etc., not the
+      retriever).
+
+    mode="disjoint": context = the next `k` High(3)-labelled answers ranked
+      immediately after the ones already consumed by the reference (same
+      score-desc, answer_id-desc sort as select_references) -- the retrieval
+      ceiling: genuinely relevant content the judge does not already hold as
+      the answer key. Topics without enough surplus High answers return an
+      empty list (no Medium fallback -- deliberately narrower than the
+      reference's own fallback, so this stays a clean "perfect retrieval"
+      condition rather than mixing in lower-quality content).
+    """
+
+    def __init__(
+        self,
+        mode: Literal["reference", "disjoint"],
+        qrels: dict[str, dict[str, int]],
+        answer_lookup: dict[str, tuple[str, int]],
+        max_reference_answers: int = 5,
+        k: int = 5,
+    ) -> None:
+        if mode not in ("reference", "disjoint"):
+            raise ValueError(f"OracleSource mode must be 'reference' or 'disjoint', got {mode!r}")
+        self._mode = mode
+        self._qrels = qrels
+        self._answer_lookup = answer_lookup
+        self._max_reference_answers = max_reference_answers
+        self._k = k
+
+    def get_contexts(self, topic: dict) -> list[str]:
+        from multirag.eval.references import _select_candidates, select_references
+
+        topic_id = topic["topic_id"]
+        if self._mode == "reference":
+            ref = select_references(
+                topic_id, self._qrels, self._answer_lookup, self._max_reference_answers
+            )
+            return [self._answer_lookup[aid][0] for aid in ref.answer_ids_used]
+
+        # mode == "disjoint"
+        high = _select_candidates(self._qrels.get(topic_id, {}), self._answer_lookup, label=3)
+        surplus = high[self._max_reference_answers : self._max_reference_answers + self._k]
+        return [self._answer_lookup[aid][0] for aid in surplus]
 
 
 def build_context_source(
-    config, answer_lookup: dict[str, tuple[str, int]] | None = None
+    config,
+    answer_lookup: dict[str, tuple[str, int]] | None = None,
+    qrels: dict[str, dict[str, int]] | None = None,
+    max_reference_answers: int = 5,
 ) -> ContextSource:
     """Factory: build the right ContextSource from a ContextSourceConfig."""
     from multirag.config.generation_config import ContextSourceConfig
@@ -136,7 +188,24 @@ def build_context_source(
                 "and pass it through."
             )
         return RunFileSource(run_path=config.run_path, answer_lookup=answer_lookup, k=config.k)
+    if config.type == "oracle":
+        if qrels is None or answer_lookup is None:
+            raise ValueError(
+                "context_source.type == 'oracle' requires both qrels and answer_lookup to be "
+                "passed to build_context_source()."
+            )
+        if config.oracle_mode not in ("reference", "disjoint"):
+            raise ValueError(
+                f"context_source.oracle_mode must be 'reference' or 'disjoint', "
+                f"got {config.oracle_mode!r}."
+            )
+        return OracleSource(
+            mode=config.oracle_mode,
+            qrels=qrels,
+            answer_lookup=answer_lookup,
+            max_reference_answers=max_reference_answers,
+            k=config.k,
+        )
     raise ValueError(
-        f"Unknown context_source.type: {config.type!r}. "
-        "Supported: 'no_rag', 'run_file'. (oracle is not yet implemented.)"
+        f"Unknown context_source.type: {config.type!r}. Supported: 'no_rag', 'run_file', 'oracle'."
     )
