@@ -11,8 +11,9 @@ from multirag.config.judge_config import WandbConfig
 class ContextSourceConfig(BaseModel):
     type: str = Field(description='"no_rag" | "run_file" | "oracle"')
     run_path: str | None = None      # for run_file: path to TREC run .tsv
-    k: int = 5                       # for run_file / oracle: passages per topic
+    k: int = 5                       # for run_file / oracle(disjoint): passages per topic
     relevance_level: int | None = None  # for oracle: minimum qrel label to include
+    oracle_mode: str | None = None   # for oracle: "reference" | "disjoint"
 
 
 class DecodingConfig(BaseModel):

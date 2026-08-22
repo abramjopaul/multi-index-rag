@@ -56,7 +56,7 @@ def select_references(
     topic_id: str,
     qrels: dict[str, dict[str, int]],
     answer_lookup: dict[str, tuple[str, int]],
-    max_answers: int = 10,
+    max_answers: int = 5,
     token_counter: Callable[[str], int] | None = None,
 ) -> ReferenceResult:
     """Select and concatenate the reference answers for one topic.

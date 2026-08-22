@@ -28,6 +28,36 @@ from multirag.eval.references import ReferenceResult, select_references
 logger = logging.getLogger(__name__)
 
 
+def _is_genuine_model_output_failure(e: Exception) -> bool:
+    """True only if the LLM actually responded but its output failed
+    structured-output validation -- never true for a transient transport/
+    server error.
+
+    instructor's InstructorRetryException is raised whenever retries are
+    exhausted, REGARDLESS of why each attempt failed -- a naive
+    isinstance(e, InstructorRetryException) check (the guard judge_client.py
+    uses for Track V/B) conflates "the model's output never validated" with
+    "the API kept returning 500s/503s and every attempt errored before a
+    response even came back." Confirmed live: a Gemini 500 INTERNAL error
+    got misclassified as a validation failure and cached, permanently
+    poisoning that (topic, metric) pair. InstructorRetryException carries
+    `failed_attempts: list[FailedAttempt]`, each with the real underlying
+    exception for that attempt -- only treat this as cacheable if EVERY
+    attempt's underlying exception was truly a validation error.
+    """
+    import pydantic
+    from instructor.core import InstructorRetryException
+
+    if isinstance(e, pydantic.ValidationError):
+        return True
+    if isinstance(e, InstructorRetryException):
+        failed = getattr(e, "failed_attempts", None) or []
+        if not failed:
+            return False
+        return all(isinstance(a.exception, pydantic.ValidationError) for a in failed)
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Cache (separate from Track B/V's .cache/judge/ -- different schema)
 # ---------------------------------------------------------------------------
@@ -41,15 +71,21 @@ def _cache_key(
     contexts: list[str],
     reference: str | None,
     judge_model: str,
+    requires_context: bool,
+    requires_reference: bool,
 ) -> str:
+    """Only fold in contexts/reference when the metric actually depends on
+    them -- e.g. faithfulness never reads `reference`, so a reference-set
+    change (e.g. max_reference_answers) must not invalidate its cache.
+    """
     raw = "|".join(
         [
             topic_id,
             metric_name,
             question,
             response,
-            "\n".join(contexts),
-            reference or "",
+            "\n".join(contexts) if requires_context else "",
+            (reference or "") if requires_reference else "",
             judge_model,
         ]
     )
@@ -102,7 +138,17 @@ async def _score_one(
     semaphore: asyncio.Semaphore,
     usage: dict,
 ) -> ScoreResult:
-    key = _cache_key(topic_id, bound.spec.name, question, response, contexts, reference, judge_model)
+    key = _cache_key(
+        topic_id,
+        bound.spec.name,
+        question,
+        response,
+        contexts,
+        reference,
+        judge_model,
+        requires_context=bound.spec.requires_context,
+        requires_reference=bound.spec.requires_reference,
+    )
     cached = cache.get(key)
     if cached is not None:
         usage["cache_hits"] += 1
@@ -128,6 +174,19 @@ async def _score_one(
             logger.warning(f"judge call failed topic={topic_id} metric={bound.spec.name}: {e}")
             value = None
             parse_ok = False
+            # Only cache a genuine "the model's output failed validation"
+            # outcome. A transient error (network blip, 500/503, rate limit)
+            # must never be cached, or it poisons this (topic, metric) pair's
+            # score forever -- every future run would silently replay the
+            # failure instead of retrying once the service recovers.
+            if not _is_genuine_model_output_failure(e):
+                return ScoreResult(
+                    topic_id=topic_id,
+                    metric_name=bound.spec.name,
+                    value=None,
+                    parse_ok=False,
+                    source="live",
+                )
         else:
             usage["new_calls"] += 1
 
@@ -135,6 +194,54 @@ async def _score_one(
     return ScoreResult(
         topic_id=topic_id, metric_name=bound.spec.name, value=value, parse_ok=parse_ok, source="live"
     )
+
+
+def _claims_cache_key(topic_id: str, response: str, judge_model: str) -> str:
+    # "claims:" prefix keeps this in a disjoint hash space from _cache_key's
+    # metric-score entries -- both live in the same cache dir, must never collide.
+    raw = "|".join(["claims", topic_id, response, judge_model])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def count_claims(metric_instance, response: str) -> int:
+    """Number of atomic claims ragas decomposes a response into -- reuses
+    FactualCorrectness's own (semi-private) decomposition step directly, so
+    "verbosity" is measured the same way the metric itself sees it. Not
+    exposed through the public ascore()/MetricResult interface in this ragas
+    version, hence calling the internal method directly.
+    """
+    claims = await metric_instance._decompose_claims(response)
+    return len(claims)
+
+
+async def _count_claims_one(
+    metric_instance,
+    topic_id: str,
+    response: str,
+    judge_model: str,
+    cache: ScoreCache,
+    semaphore: asyncio.Semaphore,
+    usage: dict,
+) -> tuple[str, int | None]:
+    key = _claims_cache_key(topic_id, response, judge_model)
+    cached = cache.get(key)
+    if cached is not None:
+        usage["cache_hits"] += 1
+        return topic_id, cached["n_claims"]
+
+    async with semaphore:
+        try:
+            n = await count_claims(metric_instance, response)
+        except Exception as e:  # noqa: BLE001 -- same non-caching rule as _score_one
+            logger.warning(f"claim count failed topic={topic_id}: {e}")
+            if not _is_genuine_model_output_failure(e):
+                return topic_id, None
+            n = None
+        else:
+            usage["new_calls"] += 1
+
+    cache.put(key, {"n_claims": n})
+    return topic_id, n
 
 
 async def score_all(
@@ -147,18 +254,28 @@ async def score_all(
     judge_model: str,
     cache_dir: Path,
     max_concurrency: int,
-) -> tuple[list[ScoreResult], dict[str, ReferenceResult], dict]:
+) -> tuple[list[ScoreResult], dict[str, ReferenceResult], dict, dict[str, int | None]]:
     """Score every (topic, applicable metric) pair. Reference-requiring
     metrics are skipped (not scored, not an error) for topics whose
     ReferenceResult.reference_text is None; context-requiring metrics are
     skipped for topics with empty contexts (e.g. --no-rag runs).
+
+    Also counts claims-per-answer (see count_claims()) for every generation,
+    reusing whichever factual_correctness_* BoundMetric is present in
+    `metrics` -- independent of context/reference availability, since claim
+    decomposition only looks at the response text.
     """
     cache = ScoreCache(cache_dir)
     semaphore = asyncio.Semaphore(max_concurrency)
     usage = {"cache_hits": 0, "new_calls": 0}
 
+    claims_metric = next(
+        (b for b in metrics if b.spec.name.startswith("factual_correctness")), None
+    )
+
     ref_results: dict[str, ReferenceResult] = {}
     tasks = []
+    claims_tasks = []
     for gen in generations:
         ref = select_references(
             gen.topic_id, qrels, answer_lookup, max_reference_answers, token_counter
@@ -185,10 +302,24 @@ async def score_all(
                 )
             )
 
+        if claims_metric is not None:
+            claims_tasks.append(
+                _count_claims_one(
+                    claims_metric.instance,
+                    gen.topic_id,
+                    gen.response,
+                    judge_model,
+                    cache,
+                    semaphore,
+                    usage,
+                )
+            )
+
     logger.info(f"Scoring {len(tasks)} (topic, metric) pairs (max_concurrency={max_concurrency})...")
     results = list(await asyncio.gather(*tasks))
+    n_claims = dict(await asyncio.gather(*claims_tasks)) if claims_tasks else {}
     logger.info(f"Scoring complete: {usage['cache_hits']} cache hit, {usage['new_calls']} new")
-    return results, ref_results, usage
+    return results, ref_results, usage, n_claims
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +332,7 @@ def build_summary(
     scores: list[ScoreResult],
     ref_results: dict[str, ReferenceResult],
     usage: dict,
+    n_claims: dict[str, int | None] | None = None,
 ) -> dict:
     by_key = {(s.topic_id, s.metric_name): s for s in scores}
     metric_names = sorted({s.metric_name for s in scores})
@@ -219,6 +351,13 @@ def build_summary(
         "n_excluded_no_reference": n_excluded_no_reference,
         "usage": usage,
     }
+
+    if n_claims:
+        claim_vals = [v for v in n_claims.values() if v is not None]
+        summary["mean_n_claims"] = (
+            round(sum(claim_vals) / len(claim_vals), 2) if claim_vals else None
+        )
+        summary["n_claims_scored"] = len(claim_vals)
 
     parse_failures = 0
     for metric_name in metric_names:
@@ -277,6 +416,7 @@ def build_manifest(
     max_reference_answers: int,
     trec_file: str | None,
     config_name: str,
+    prompt_template_version: str | None = None,
 ) -> dict:
     commit, dirty = _git_commit()
     return {
@@ -290,7 +430,11 @@ def build_manifest(
         "generator_backend": config.generator.backend,
         "max_new_tokens": config.generator.decoding.max_new_tokens,
         "seed": config.generator.decoding.seed,
-        "prompt_template_version": config.prompt_template_version,
+        # The actual template used (--prompt-template-version override, or
+        # the --no-rag -> "v1" default), NOT config.prompt_template_version
+        # -- those differ whenever either kicks in, and reporting the wrong
+        # one here would make the manifest lie about what actually ran.
+        "prompt_template_version": prompt_template_version or config.prompt_template_version,
         "prompt_sha256": prompt_sha256,
         "judge_model": config.judge.model,
         "judge_temperature": config.judge.temperature,
@@ -330,6 +474,12 @@ def build_report(
         f"- n_excluded_no_reference: {summary['n_excluded_no_reference']}",
         f"- parse_failures: {summary['parse_failures']}",
         f"- usage: {summary['usage']}",
+    ]
+    if "mean_n_claims" in summary:
+        lines.append(
+            f"- mean_n_claims: {summary['mean_n_claims']} (n={summary['n_claims_scored']})"
+        )
+    lines += [
         "",
         "## Metrics (answering-only / all-topics)",
         "",
@@ -354,8 +504,10 @@ def write_outputs(
     manifest: dict,
     summary: dict,
     generations: list[GenerationRecord],
+    n_claims: dict[str, int | None] | None = None,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    n_claims = n_claims or {}
 
     scores_path = output_dir / "scores_per_sample.jsonl"
     by_topic: dict[str, dict] = {}
@@ -369,6 +521,8 @@ def write_outputs(
                 "finish_reason": g.finish_reason,
                 "completion_tokens": g.completion_tokens,
                 "n_contexts": len(g.contexts),
+                "response": g.response,
+                "n_claims": n_claims.get(g.topic_id),
                 **by_topic.get(g.topic_id, {}),
             }
             f.write(json.dumps(row, ensure_ascii=False) + "\n")

@@ -17,7 +17,9 @@ generator:
   decoding:
     temperature: 0.0
     top_p: 1.0
-    max_new_tokens: 512
+    max_new_tokens: 1024   # bumped from 512 -- 57/100 bm25 topics were hitting the old
+                            # ceiling mid-derivation, dragging faithfulness down as a
+                            # truncation artifact rather than a genuine grounding failure
     seed: 42
 
 prompt_template_version: "v2"   # RAG-only: answer strictly from context, refuse if insufficient
