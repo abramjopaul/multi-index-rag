@@ -1,0 +1,124 @@
+_wandb:
+    value:
+        cli_version: 0.27.2
+        e:
+            lu2pnrd8a0o6f7zdao316ujwf49g7x9f:
+                codePath: experiments/track_c/correct_and_republish.py
+                codePathLocal: experiments/track_c/correct_and_republish.py
+                cpu_count: 8
+                cpu_count_logical: 16
+                cudaVersion: "13.3"
+                disk:
+                    /:
+                        total: "206900281344"
+                        used: "168083460096"
+                email: abramjopaul@gmail.com
+                executable: /home/abramjopaul/multi-index-rag/.venv/bin/python
+                git:
+                    commit: d4c8bb15067541e51fc281dc8cb7ba6c786e3404
+                    remote: https://github.com/abramjopaul/multi-index-rag.git
+                gpu: NVIDIA L4
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ada
+                      cudaCores: 7424
+                      memoryTotal: "24152899584"
+                      name: NVIDIA L4
+                      uuid: GPU-c8c7c95d-88b6-ba5f-383c-98dcd9917d28
+                host: multi-index-rag-gpu
+                memory:
+                    total: "67418697728"
+                os: Linux-6.17.0-1022-gcp-x86_64-with-glibc2.39
+                program: /home/abramjopaul/multi-index-rag/experiments/track_c/correct_and_republish.py
+                python: CPython 3.12.3
+                root: /home/abramjopaul/multi-index-rag
+                startedAt: "2026-08-24T10:29:21.300295Z"
+                writerId: lu2pnrd8a0o6f7zdao316ujwf49g7x9f
+        m: []
+        python_version: 3.12.3
+        t:
+            "1":
+                - 1
+                - 11
+                - 49
+                - 51
+                - 95
+                - 105
+            "2":
+                - 1
+                - 11
+                - 49
+                - 51
+                - 95
+                - 105
+            "3":
+                - 2
+                - 3
+                - 5
+                - 13
+                - 14
+                - 15
+                - 16
+                - 62
+            "4": 3.12.3
+            "5": 0.27.2
+            "6": 4.57.6
+            "12": 0.27.2
+            "13": linux-x86_64
+config_name:
+    value: oracle_reference_ceiling
+config_sha256:
+    value: b1930c9abbf06f76a567cf1a1672368b48afb8544c56eb087102c69bbf7a0e13
+corrected_from_run_id:
+    value: 8850vbtq
+corrected_from_run_name:
+    value: C-oracle_reference_ceiling-k5-20260821-212413
+correction_applied_at_utc:
+    value: "2026-08-24T10:29:21.271756+00:00"
+generator_backend:
+    value: hf
+generator_model:
+    value: Qwen/Qwen2.5-3B-Instruct
+git_commit:
+    value: a0dc9ac3f8680db989232270eddbbf4ee07c878d
+git_dirty:
+    value: true
+google_genai_version:
+    value: 2.15.0
+instructor_version:
+    value: 1.15.4
+judge_metrics:
+    value:
+        - faithfulness
+        - factual_correctness_precision
+        - factual_correctness_recall
+judge_model:
+    value: gemini-3.5-flash-lite
+judge_temperature:
+    value: 0
+k:
+    value: 5
+max_new_tokens:
+    value: 1024
+max_reference_answers:
+    value: 5
+no_rag:
+    value: false
+prompt_sha256:
+    value: 70648ca448a8c5720903590f107e70db1a190f66cfbfab1517f88a478af9eda8
+prompt_template_version:
+    value: v2
+python_version:
+    value: 3.12.3
+qrels_path:
+    value: /home/abramjopaul/multi-index-rag/data/raw/qrels/qrel_task1_2022_all.tsv
+qrels_sha256:
+    value: 2b5565f988fbaf58ff5d86102a170feaaca14eb667091ac4879c1ff55bf458c3
+ragas_version:
+    value: 0.4.3
+seed:
+    value: 42
+timestamp_utc:
+    value: "2026-08-21T21:37:28.278352+00:00"
+trec_file:
+    value: null

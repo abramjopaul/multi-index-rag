@@ -1,0 +1,93 @@
+_wandb:
+    value:
+        cli_version: 0.27.2
+        e:
+            ejqkhv16sfviw60qxjv61g6uxlxqqt9o:
+                args:
+                    - --trec-file
+                    - data/runs/track_b/fusion_bm25_dense.tsv
+                    - --mode
+                    - batch
+                codePath: experiments/track_b/rescore_run.py
+                codePathLocal: experiments/track_b/rescore_run.py
+                cpu_count: 8
+                cpu_count_logical: 16
+                cudaVersion: "13.3"
+                disk:
+                    /:
+                        total: "206900281344"
+                        used: "164450328576"
+                email: abramjopaul@gmail.com
+                executable: /home/abramjopaul/multi-index-rag/.venv/bin/python
+                git:
+                    commit: 9603bf10e124821e92b00a1dda98ddd26272fbfd
+                    remote: https://github.com/abramjopaul/multi-index-rag.git
+                gpu: NVIDIA L4
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ada
+                      cudaCores: 7424
+                      memoryTotal: "24152899584"
+                      name: NVIDIA L4
+                      uuid: GPU-b66d21fc-0139-5265-cd1a-2b2419ef6aa4
+                host: multi-index-rag-gpu
+                memory:
+                    total: "67418705920"
+                os: Linux-6.17.0-1021-gcp-x86_64-with-glibc2.39
+                program: /home/abramjopaul/multi-index-rag/experiments/track_b/rescore_run.py
+                python: CPython 3.12.3
+                root: /home/abramjopaul/multi-index-rag
+                startedAt: "2026-08-07T21:37:14.598005Z"
+                writerId: ejqkhv16sfviw60qxjv61g6uxlxqqt9o
+        m: []
+        python_version: 3.12.3
+        t:
+            "3":
+                - 2
+                - 3
+                - 13
+                - 15
+                - 16
+            "4": 3.12.3
+            "5": 0.27.2
+            "12": 0.27.2
+            "13": linux-x86_64
+config_sha256:
+    value: d4000c5b8327b8edfa378f3d7c5e203114d3e621d19363cd2d0964ff532f3e82
+execution_mode:
+    value: batch
+fill_depth:
+    value: 20
+git_commit:
+    value: 9603bf10e124821e92b00a1dda98ddd26272fbfd
+git_dirty:
+    value: true
+google_genai_version:
+    value: 2.15.0
+hole_rate_cutoffs:
+    value:
+        - 5
+        - 10
+        - 20
+        - 100
+        - 1000
+instructor_version:
+    value: 1.15.4
+judge_model:
+    value: gemini-3.5-flash-lite
+judge_provider:
+    value: google
+judge_temperature:
+    value: 0
+prompt_sha256:
+    value: a3d29da928f20b5aba483f2b58690ff1b119809d8c7339ef1e9e3fdd255cfba2
+python_version:
+    value: 3.12.3
+timestamp_utc:
+    value: "2026-08-07T21:37:13.444122+00:00"
+usage:
+    value:
+        cache_hits: 2744
+        estimated_cost_usd: 0.01159
+        pairs_submitted: 39
+        tokens: 77275

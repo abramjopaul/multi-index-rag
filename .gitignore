@@ -18,6 +18,8 @@ data/
 .cache/
 results/
 
+thesis/
+
 # Weights & Biases logs
 wandb/
 
