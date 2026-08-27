@@ -116,5 +116,9 @@ RESULTS_TRACK_B_DIR = RESULTS_DIR / "track_b"
 # Track C: generation + ragas evaluation outputs
 RESULTS_TRACK_C_DIR = RESULTS_DIR / "track_c"
 
+# Track A: ARQMath Task 2 (formula retrieval) run files and evaluation outputs
+TRACK_A_RUNS_DIR = RUNS_DIR / "track_a"
+RESULTS_TRACK_A_DIR = RESULTS_DIR / "track_a"
+
 # R7: formula-overlap diagnostic outputs
 RESULTS_DIAGNOSTICS_DIR = RESULTS_DIR / "diagnostics"

@@ -20,10 +20,14 @@ retriever: SLT, OPT, SLT-TYPE (type-erased SLT). No similarity threshold is
 applied anywhere -- the real retriever has none either, it's pure top-k/RRF
 over embeddings, so plain containment numbers are the more faithful choice.
 
-Compares mean containment for human-judged-relevant answers against two
-controls: non-relevant judged answers (same topic, qrel label=0) and random
-answers from the whole collection. Reports plain means and simple directional
-counts only -- no significance tests.
+Compares human-judged-relevant answers against two controls: non-relevant
+judged answers (same topic, qrel label=0) and random answers from the whole
+collection. Reports three per-topic statistics, not just the mean: mean (the
+old headline number), max (does at least one answer in the group contain the
+query formula well -- what retrieval actually needs, since ranking only
+needs one relevant answer to beat the crowd), and mean-of-top-5 (a less
+noisy middle ground). Plain aggregates and simple directional counts only --
+no significance tests.
 
 Pure offline computation over precomputed MathML in the v3 TSVs and
 answers.jsonl -- no network, no LaTeXML subprocess. Deterministic given --seed.
@@ -166,13 +170,32 @@ def best_pair_containment(
     return best
 
 
-def mean_containment_for_topic(
+TOP_K = 5
+
+
+def topic_containment_stats(
     topic_formulas: list[Formula], answer_formula_lists: list[list[Formula]], representation: str
-) -> float:
+) -> dict:
+    """Per-topic containment stats for one group of answers, all derived from
+    the same per-answer best_pair_containment values (computed once):
+      - mean: fraction-of-tuples-matched averaged over every answer in the
+        group -- dilutes a single great match under a long tail of misses.
+      - max: does at least ONE answer in this group contain the query
+        formula well -- the number retrieval actually needs, since ranking
+        only needs one relevant answer to outrank the crowd.
+      - top{TOP_K}_mean: mean of the TOP_K highest per-answer values (or
+        fewer if the group has fewer than TOP_K answers) -- a less noisy
+        middle ground than max alone.
+    """
     if not answer_formula_lists:
-        return 0.0
+        return {"mean": 0.0, "max": 0.0, f"top{TOP_K}_mean": 0.0}
     vals = [best_pair_containment(topic_formulas, af, representation) for af in answer_formula_lists]
-    return sum(vals) / len(vals)
+    vals_desc = sorted(vals, reverse=True)
+    return {
+        "mean": sum(vals) / len(vals),
+        "max": vals_desc[0],
+        f"top{TOP_K}_mean": sum(vals_desc[:TOP_K]) / min(TOP_K, len(vals_desc)),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -510,9 +533,18 @@ def run_diagnostic(
             out.append(afs_cache[aid])
         return out
 
-    # ---- Analysis A+B: per-topic mean containment, per strategy/representation/group ----
+    # ---- Analysis A+B: per-topic containment stats, per strategy/representation/group ----
     overlap_by_topic_rows: list[dict] = []
-    overlap_lookup: dict[tuple, float] = {}  # (strategy, tid, rel_def, representation, group) -> mean
+    overlap_lookup: dict[tuple, dict] = {}  # (strategy, tid, rel_def, representation, group) -> {mean,max,top5_mean}
+
+    def _stats_row(strategy, tid, rel_def, representation, group, stats, n_answers, n_formulas) -> dict:
+        return {
+            "query_strategy": strategy, "topic_id": tid, "relevance_def": rel_def,
+            "representation": representation, "group": group,
+            "mean_containment": stats["mean"], "max_containment": stats["max"],
+            f"top{TOP_K}_mean_containment": stats[f"top{TOP_K}_mean"],
+            "n_answers": n_answers, "n_topic_formulas_selected": n_formulas,
+        }
 
     for strategy in QUERY_STRATEGIES:
         for tid in sorted(topic_ids):
@@ -522,14 +554,11 @@ def run_diagnostic(
             for rel_def, rel_ids in (("high", relevant_high[tid]), ("high_medium", relevant_hm[tid])):
                 afs = _afs(rel_ids)
                 for representation in REPRESENTATIONS:
-                    mean_c = mean_containment_for_topic(tformulas, afs, representation)
-                    overlap_lookup[(strategy, tid, rel_def, representation, "relevant")] = mean_c
-                    overlap_by_topic_rows.append({
-                        "query_strategy": strategy, "topic_id": tid, "relevance_def": rel_def,
-                        "representation": representation, "group": "relevant",
-                        "mean_containment": mean_c, "n_answers": len(rel_ids),
-                        "n_topic_formulas_selected": len(tformulas),
-                    })
+                    cont_stats = topic_containment_stats(tformulas, afs, representation)
+                    overlap_lookup[(strategy, tid, rel_def, representation, "relevant")] = cont_stats
+                    overlap_by_topic_rows.append(
+                        _stats_row(strategy, tid, rel_def, representation, "relevant", cont_stats, len(rel_ids), len(tformulas))
+                    )
 
             # controls: sized against high_medium only (Analysis B), same as v1's convention
             if not tformulas or not relevant_hm[tid]:
@@ -537,45 +566,43 @@ def run_diagnostic(
             nonrel_afs = _afs(nonrelevant_controls[tid])
             rand_afs = _afs(random_controls[tid])
             for representation in REPRESENTATIONS:
-                mean_nonrel = mean_containment_for_topic(tformulas, nonrel_afs, representation)
-                mean_rand = mean_containment_for_topic(tformulas, rand_afs, representation)
-                overlap_lookup[(strategy, tid, "high_medium", representation, "non_relevant")] = mean_nonrel
-                overlap_lookup[(strategy, tid, "high_medium", representation, "random")] = mean_rand
-                overlap_by_topic_rows.append({
-                    "query_strategy": strategy, "topic_id": tid, "relevance_def": "high_medium",
-                    "representation": representation, "group": "non_relevant",
-                    "mean_containment": mean_nonrel, "n_answers": len(nonrelevant_controls[tid]),
-                    "n_topic_formulas_selected": len(tformulas),
-                })
-                overlap_by_topic_rows.append({
-                    "query_strategy": strategy, "topic_id": tid, "relevance_def": "high_medium",
-                    "representation": representation, "group": "random",
-                    "mean_containment": mean_rand, "n_answers": len(random_controls[tid]),
-                    "n_topic_formulas_selected": len(tformulas),
-                })
+                stats_nonrel = topic_containment_stats(tformulas, nonrel_afs, representation)
+                stats_rand = topic_containment_stats(tformulas, rand_afs, representation)
+                overlap_lookup[(strategy, tid, "high_medium", representation, "non_relevant")] = stats_nonrel
+                overlap_lookup[(strategy, tid, "high_medium", representation, "random")] = stats_rand
+                overlap_by_topic_rows.append(
+                    _stats_row(strategy, tid, "high_medium", representation, "non_relevant",
+                               stats_nonrel, len(nonrelevant_controls[tid]), len(tformulas))
+                )
+                overlap_by_topic_rows.append(
+                    _stats_row(strategy, tid, "high_medium", representation, "random",
+                               stats_rand, len(random_controls[tid]), len(tformulas))
+                )
 
-    # ---- Overlap summary: plain means + directionality counts, no significance tests ----
+    # ---- Overlap summary: plain aggregates + directionality counts, no significance tests ----
+    stat_keys = ["mean", "max", f"top{TOP_K}_mean"]
     overlap_summary_rows: list[dict] = []
     for strategy in QUERY_STRATEGIES:
         for representation in REPRESENTATIONS:
-            rel_vals, nonrel_vals, rand_vals = [], [], []
+            rel_stats, nonrel_stats, rand_stats = [], [], []
             for tid in sorted(topic_ids):
                 if not topic_formulas_by_strategy[strategy].get(tid) or not relevant_hm[tid]:
                     continue
-                rel_vals.append(overlap_lookup[(strategy, tid, "high_medium", representation, "relevant")])
-                nonrel_vals.append(overlap_lookup[(strategy, tid, "high_medium", representation, "non_relevant")])
-                rand_vals.append(overlap_lookup[(strategy, tid, "high_medium", representation, "random")])
-            n = len(rel_vals)
-            overlap_summary_rows.append({
-                "query_strategy": strategy,
-                "representation": representation,
-                "n_topics": n,
-                "mean_relevant": (sum(rel_vals) / n) if n else float("nan"),
-                "mean_non_relevant": (sum(nonrel_vals) / n) if n else float("nan"),
-                "mean_random": (sum(rand_vals) / n) if n else float("nan"),
-                "n_topics_relevant_gt_non_relevant": sum(1 for r, c in zip(rel_vals, nonrel_vals) if r > c),
-                "n_topics_relevant_gt_random": sum(1 for r, c in zip(rel_vals, rand_vals) if r > c),
-            })
+                rel_stats.append(overlap_lookup[(strategy, tid, "high_medium", representation, "relevant")])
+                nonrel_stats.append(overlap_lookup[(strategy, tid, "high_medium", representation, "non_relevant")])
+                rand_stats.append(overlap_lookup[(strategy, tid, "high_medium", representation, "random")])
+            n = len(rel_stats)
+            row = {"query_strategy": strategy, "representation": representation, "n_topics": n}
+            for stat_key in stat_keys:
+                rel_vals = [s[stat_key] for s in rel_stats]
+                nonrel_vals = [s[stat_key] for s in nonrel_stats]
+                rand_vals = [s[stat_key] for s in rand_stats]
+                row[f"{stat_key}_relevant"] = (sum(rel_vals) / n) if n else float("nan")
+                row[f"{stat_key}_non_relevant"] = (sum(nonrel_vals) / n) if n else float("nan")
+                row[f"{stat_key}_random"] = (sum(rand_vals) / n) if n else float("nan")
+                row[f"n_topics_{stat_key}_relevant_gt_non_relevant"] = sum(1 for r, c in zip(rel_vals, nonrel_vals) if r > c)
+                row[f"n_topics_{stat_key}_relevant_gt_random"] = sum(1 for r, c in zip(rel_vals, rand_vals) if r > c)
+            overlap_summary_rows.append(row)
 
     # ---- Analysis C: worked examples (fanout only, High-relevant, lowest overlap) ----
     candidates: list[tuple[float, str]] = []
@@ -586,7 +613,7 @@ def run_diagnostic(
             continue
         afs = _afs(high_ids)
         avg_containment = sum(
-            mean_containment_for_topic(tformulas, afs, representation) for representation in REPRESENTATIONS
+            topic_containment_stats(tformulas, afs, representation)["mean"] for representation in REPRESENTATIONS
         ) / len(REPRESENTATIONS)
         candidates.append((avg_containment, tid))
     candidates.sort(key=lambda x: (x[0], x[1]))
@@ -657,13 +684,16 @@ def write_csv(path: Path, rows: list[dict]) -> None:
 
 def print_summary(result: dict) -> None:
     print("\n=== R7 formula-overlap: headline summary (relevance_def=high_medium) ===")
-    print(f"{'strategy':10s} {'repr':9s} {'n':>4s} {'relevant':>9s} {'non_rel':>9s} {'random':>9s} "
-          f"{'rel>nonrel':>11s} {'rel>rand':>9s}")
-    for row in result["overlap_summary_rows"]:
-        print(f"{row['query_strategy']:10s} {row['representation']:9s} {row['n_topics']:>4d} "
-              f"{row['mean_relevant']:>9.3f} {row['mean_non_relevant']:>9.3f} {row['mean_random']:>9.3f} "
-              f"{row['n_topics_relevant_gt_non_relevant']:>5d}/{row['n_topics']:<5d} "
-              f"{row['n_topics_relevant_gt_random']:>4d}/{row['n_topics']:<4d}")
+    for stat_key, label in (("mean", "MEAN"), ("max", "MAX"), (f"top{TOP_K}_mean", f"TOP-{TOP_K} MEAN")):
+        print(f"\n--- {label} containment ---")
+        print(f"{'strategy':10s} {'repr':9s} {'n':>4s} {'relevant':>9s} {'non_rel':>9s} {'random':>9s} "
+              f"{'rel>nonrel':>11s} {'rel>rand':>9s}")
+        for row in result["overlap_summary_rows"]:
+            print(f"{row['query_strategy']:10s} {row['representation']:9s} {row['n_topics']:>4d} "
+                  f"{row[f'{stat_key}_relevant']:>9.3f} {row[f'{stat_key}_non_relevant']:>9.3f} "
+                  f"{row[f'{stat_key}_random']:>9.3f} "
+                  f"{row[f'n_topics_{stat_key}_relevant_gt_non_relevant']:>5d}/{row['n_topics']:<5d} "
+                  f"{row[f'n_topics_{stat_key}_relevant_gt_random']:>4d}/{row['n_topics']:<4d}")
     print(f"\nWorked examples selected: {result['n_worked_examples']}")
     print(f"Topics excluded (no topic formula at all): {len(result['excluded_no_topic_formula'])}")
     print(f"Topics excluded (no High-relevant answers): {len(result['excluded_no_relevant_high'])}")
