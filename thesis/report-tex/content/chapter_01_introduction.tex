@@ -1,0 +1,455 @@
+\chapter{Introduction}\label{ch:introduction}
+
+% --- §1.1 and §1.2 written 2026-09-28.  Drafted in the chat as prose over three passes and
+%   approved before this write (CLAUDE.md §2, steps 5-6).  Snapshot:
+%   chapter_01_introduction.pre1112.bak.tex.  Budget: §1.1 2.5 pp max, §1.2 1 p max (Abram);
+%   ~965 and ~365 words, page counts from his build.
+%
+% WHAT THESE TWO SECTIONS ARE FOR.  §15 O-20 (b): the ten terms §1.3 uses must be established
+%   before §1.3 uses them -- Göbel's own condition for naming answer retrieval in a research
+%   question.  All ten land here.  §1.1: retrieved context, generator, structure-aware formula
+%   index, formula search, answer retrieval (contrasted against formula search, as she asked),
+%   formula representation, text-only retrieval.  §1.2: multi-index retriever, retrieval quality,
+%   faithfulness, factual correctness, generation without retrieval.
+%
+% INTRODUCED HERE, DEFINED IN CHAPTER 3 -- the boundary this write turns on.  Chapter 1 gives each
+%   term a plain gloss and Chapter 3 keeps every definition site: answer retrieval and formula
+%   search are §3.1's, the tree representations §3.2's, faithfulness and factual correctness
+%   §3.7's.  Italics follow that split rather than the usual first-use rule (CLAUDE.md §3), because
+%   italicising a term in both places would give it two definition sites, which is the defect the
+%   first-draft review named.
+%   ⚠ FOUR TERMS ARE ITALICISED ANYWAY, on Abram's instruction 2026-09-28: *multi-index retriever*,
+%   *faithfulness*, *factual correctness*, *generation without retrieval*.  The first and the last
+%   are this thesis's own names and have no other site, so Chapter 1 is where they belong.  The
+%   middle two ARE italicised again in §3.7, deliberately -- a one-clause gloss here, the
+%   construction there.  §7a should carry a row for each recording the split.  The five plain terms
+%   in §1.1 could take the same emphasis if the asymmetry reads badly on the page; raised and left.
+%
+% NO COINED TERM AND NO FIGURE.  Nothing from §5.2.2 or §6.2 -- not blocked, flat, formula block,
+%   fanout, floor, configuration or judge pool -- and no number anywhere, so neither section can go
+%   stale against the registry.  The sparse and dense indexes are described, never named; so are
+%   the trees.  "formulas", not "formulae".
+%
+% THE THREE DIFFICULTIES ARE NUMBERED IN THE PROSE (Abram, 2026-09-28): the arrangement on the
+%   retrieval side, whether a better ranking reaches the answer, and whether any of it can be
+%   measured on a collection judged beforehand.  That is §2.5's three-gap shape, so §1.1 names the
+%   difficulties and §2.5 names what the literature has and has not done about each.  Without the
+%   ordinals the paragraphs read as a list of unrelated worries -- his note on the draft.
+%
+% ⚠ §1.1's LAST-BUT-ONE PARAGRAPH IS §15 O-6's ANSWER: the title says *scientific text* and the
+%   evaluation is community mathematical question answering.  It concedes the gap and scopes every
+%   claim to the collection.  THE TITLE ITSELF IS STILL UNDECIDED -- O-6's other half.
+%
+% CITATIONS, all already in sources.bib.  lewis2020rag and gao2024ragsurvey for the arrangement and
+%   what it usually searches; dadure2024mirreview for the field having known the problem from the
+%   start; davila2017tangents and mansouri2019tangentcft for indexing structure; mansouri2022arqmath3
+%   for formula search being where such indexes are compared; zanibbi2020arqmath for the collection
+%   and for answer retrieval; salemi2024erag, henkel2024mathrag and alshammari2026mathnet for the
+%   published findings disagreeing; buckley2004incomplete for pooled judgments.
+%   ⚠ alshammari2026mathnet is one of §15 O-22's seven entries with TODO fields and no PDF.  §2.3
+%   already leans on it, so this adds no new debt, but it is the one claim in these two sections
+%   resting on an abstract.  The three-key cluster is deliberate: the claim IS that they disagree.
+%
+% Cut on Abram's reading of the drafts, each for a reason worth keeping:
+%   - "repair" twice for what RAG and structure indexing do -> "the standard approach" and "the
+%     solution"; plainer, and "repair" read as though the field had broken something.
+%   - "Only one of them reaches an ordinary text index" -- the next sentence says it better.
+%   - "Keep the symbols and rearrange them and the index sees much the same formula, though it now
+%     computes something else" -- the rename example already carries the point.
+%   - "built alike rather than written alike" -> "mean the same thing rather than ... written the
+%     same way", which is the property the index is after.
+%   - "an index apiece" -> "one index per representation".
+%   - "One boundary belongs at the outset" -> "The scope of what is claimed here should be clear
+%     from the start".
+%   - the optional scope paragraph in §1.2, carrying the three §1c-i scope decisions.  ⚠ THEY ARE
+%     THEREFORE STATED NOWHERE IN THE THESIS: §1.6 cannot hold them at 173 words and §7.2 was
+%     written without them.  Manifest §4 and §10 still expect them.  Decide before submission.
+%
+% "Mathematics Stack Exchange", the site's own name, in all three places it appears in the thesis --
+%   §1.1, §2.1 and §3.1.  §3.1 said "Math Stack Exchange" until 2026-09-28, when Abram had it swept;
+%   its paragraph was reflowed with the change.  Bib titles keep whatever their papers print.
+\section{Motivation}\label{sec:intro-motivation}
+
+A student with a mathematical question asks it in words and formulas together. A language model can
+answer such a question from what it learnt in training, and it will answer whether or not it knows.
+A standard approach is to put a search step in front of it, so that the model is provided with the
+relevant context. The model then writes its answer from the question and that
+context~\cite{lewis2020rag}. Text is the most widely used retrieval source in
+systems built this way~\cite{gao2024ragsurvey}.
+
+Mathematics is not prose. A post on a mathematics site carries its argument in two registers at
+once, the words that explain and the formulas that do the work, and a retriever has to read both. A
+formula enters an ordinary text index as the characters it was typed with, so it can be matched only
+where those same characters appear. Rename the variables and the index sees an unrelated string.
+The index never holds the arrangement itself --- operators and their operands, and the spatial
+arrangement of variables and operators. This is where the meaning of a formula lies. This is the
+problem mathematical information retrieval has worked on since it began~\cite{dadure2024mirreview}.
+
+The solution is to index the structure rather than the characters. A formula can be parsed into a
+tree, and that tree turned into something an index can hold and compare, so that two formulas count
+as similar when they mean the same thing rather than when they are written the same
+way~\cite{davila2017tangents,mansouri2019tangentcft}. An index of that kind is a structure-aware
+formula index. These indexes work when the query is itself a formula. Formula search --- given one
+formula, return the formulas most like it --- is what they were designed for, and where they are
+compared against one another~\cite{mansouri2022arqmath3}.
+
+The task this thesis studies is the other one. Answer retrieval takes a mathematical question,
+stated in words and formulas, and returns the posts that answer it~\cite{zanibbi2020arqmath}. What
+separates it from formula search is not its input but its standard: an answer is relevant when it
+resolves the question, so a post whose formulas match the question symbol for symbol can still be
+worthless, and a restatement of the question is the clearest case of it. A formula index that finds
+similar formulas well has therefore not been shown to find answers well. The two cannot be read off
+one another.
+
+The first difficulty follows from that, and it is one of arrangement. A formula can be represented
+as a tree in more than one way, and each of these formula representations keeps something the others
+drop, so a system can hold several of them at once, one index per representation, rather than
+choosing between them. Nor can a formula index work alone: the words around a formula are what
+separate an answer deriving a result from a comment repeating the question, so its ranking has to be
+combined with that of text-only retrieval --- retrieval over the words of a post and nothing else.
+How several formula representations behave as a group, and how that group meets text retrieval, is
+underexplored where answers are what is retrieved, as Chapter~\ref{ch:related-work} sets out.
+
+The second difficulty is that a better ranking is not the end of the matter. What a reader sees is
+the answer the generator wrote, and a ranking reaches that answer only through the context it
+supplied. Those are two measurements, and whether the first carries into the second is unsettled:
+the published findings
+disagree~\cite{salemi2024erag,henkel2024mathrag,alshammari2026mathnet}, and none of that work
+varies how formulas are represented in the retriever.
+
+The third difficulty belongs to the measuring rather than to the system. A test collection is judged
+once, on what the systems taking part at the time retrieved; everything outside that is left
+unjudged and normally counted as not relevant~\cite{buckley2004incomplete}. A system built
+afterwards retrieves posts nobody ever looked at, and is marked down for finding them. Nothing can
+be claimed about such a system until the instruments that score it have been shown to work, which is
+why two of them are established here before any result is reported.
+
+The scope of what is claimed here should be clear from the start. The problem described above is
+general: wherever a document carries mathematics in its text, an index reading only the characters
+loses the structure, and the context a generator receives is the poorer for it. What this thesis
+measures is narrower. Every experiment runs on one collection of community mathematical question
+answering, built from a snapshot of Mathematics Stack Exchange~\cite{zanibbi2020arqmath}. The
+questions are asked by people who want help with a problem rather than written up for publication,
+the answers are posts rather than articles, and no scientific paper is retrieved anywhere in this
+thesis. Every claim made here is a claim about that collection.
+
+What remains is a system to build and three things to find out about it.
+Section~\ref{sec:intro-objectives} states them.
+
+\section{Objectives}\label{sec:intro-objectives}
+
+The objective is to build a retriever for answer retrieval that reads formula structure, and to find
+out what it changes --- first in the ranking, and then in the answer a generator writes from it.
+
+Three structure-aware formula indexes are built, one per formula representation, so that the
+representations are compared rather than assumed. They are placed beside two text indexes, one
+matching the words of a post literally and one matching them by meaning. A question is put to all of
+them, and the rankings they return are merged into one. A retriever that combines a text index with
+at least one formula index is a \emph{multi-index retriever}. How the merge is done is not given in
+advance, so it is varied: which rankings enter it, and whether the three formula rankings enter it
+together or separately.
+
+Each such retriever is scored against relevance judgments for the same questions, and that score is
+its retrieval quality. Whether adding formula indexes to text-only retrieval raises it is the first
+thing to settle.
+
+The second is what that reaches. The best of the multi-index retrievers hands the top of its ranking
+to one generator as the retrieved context, and the answers are scored twice: for how much of what an
+answer says its context supplied, which is \emph{faithfulness}, and for how much of what it says is
+correct, which is \emph{factual correctness}. Both readings are set against answers the same
+generator writes for the same questions with no context at all --- \emph{generation without
+retrieval} --- and against the answers built from text-only retrieval's context. The third thing to
+settle is whether any of it holds when the generator is larger.
+
+Two things are outside the objective. The retriever is assembled from published components and none
+of them is trained further. One prompt is written and held fixed, so that what separates two sets of
+answers is the context and nothing else.
+
+Section~\ref{sec:intro-rqs} puts all of this as questions.
+
+% --- §1.3 and §1.4 rewritten 2026-09-24 against manifest §1b and §1c, whose RQ and hypothesis
+% sets were restated that day. Drafted in chat as prose and approved by Abram before this write
+% (CLAUDE.md §2, steps 5-6). Snapshot: chapter_01_introduction.preRQ0924.bak.tex.
+%
+% Abram's decisions, 2026-09-24, each a deliberate departure from the old file:
+%   - DECISION RULES are NOT stated per hypothesis here. They live in manifest §1c and are applied
+%     at the verdict sites. Manifest §5 row 1.4 updated to match.
+%   - THE TWO SELECTION RULES ("the strongest text-only retrieval", "the best multi-index
+%     retriever" = highest ndcg'@10 under the judge's labels within each group, 78 topics) are NOT
+%     stated here; manifest §1b keeps them.
+%   - The ANSWERING-EFFICIENCY concession is dropped from Chapter 1; §7.2 carries it (manifest §1b).
+%
+% Retired here: old H1.1 (transfer) and old H1.2 (containment) carry no verdict since 2026-09-24
+% and are narrative in Chapter 5. That also removes Chapter 1's only use of *formula block*
+% (closed §15 O-14 d). Renumbering: old H1.3 -> H1.1 and H1.2(a); old H1.4 -> H1.3;
+% old H1.5 -> H1.2(b) and H1.4; old H2.2/H2.3 -> H2.3/H2.4; old H2.4 -> H3.1. H2.2 is new.
+% The thesis never mentions any renumbering -- its reader never saw the old IDs.
+%
+% ✅ DONE 2026-09-28: §1.1 and §1.2 establish all ten terms this section uses -- answer retrieval,
+%   structure-aware formula index, text-only retrieval, multi-index retriever, factual correctness,
+%   faithfulness, retrieval quality, retrieved context, generation without retrieval, generator --
+%   with *answer retrieval* set against formula search, Göbel's own condition for naming it in a
+%   research question (§15 O-20 b, closed). See the note above §1.1 for which term is introduced
+%   where, and for the introduced-here / defined-in-Chapter-3 split.
+% ✅ DONE 2026-09-28 (Abram): every hypothesis now points at the section that tests it, so the list
+%   is parallel across the two groups and the opening paragraph names the two ruling sites.
+%   Retrieval, repointed after the §15 O-21 split: H1.1 -> §5.4.3 `sec:res-add-one` (was
+%   `sec:res-single-index`, §5.4.2, which decides no hypothesis), H1.2 -> §5.4.4
+%   `sec:res-add-three`, H1.3 -> §5.4.5 `sec:res-fusion` (already correct), H1.4 -> §5.4.6
+%   `sec:res-ablation`.  The keys are semantic, so they followed the move and the numbers are
+%   LaTeX's.
+%   Generation: H2.1 and H2.2 -> §6.3.2 `sec:gen-res-context`, H2.3 and H2.4 -> §6.3.3
+%   `sec:gen-res-tau`, H3.1 -> §6.3.4 `sec:gen-res-sizes`, replacing five bare
+%   Chapter~\ref{ch:generation} pointers.  ⚠ The old plan in manifest §9b sent H2.1 to §6.3.1 and
+%   H2.2 to §6.3.2; that mapping predates the §6.3 OVERVIEW subsection, which took 6.3.1, and
+%   §6.3.2 opens by naming both hypotheses, so both point there.  Manifest §9b corrected with this
+%   write.  Two hypotheses sharing a pointer is the existing pattern -- H2.3 and H2.4 were always
+%   planned to share one.
+% NOTE If Göbel holds to her earlier ruling that generator size carries no hypothesis
+%   (§15 O-2; checklist G4), RQ3 and H3.1 come out and the ladder is reported with no verdict.
+%
+% --- §1.4 OPENING PARAGRAPH EDITED 2026-09-28, on Abram's instruction, two changes.
+%   (i) "the generation hypotheses at the end of Chapter 6" -> Section~\ref{sec:gen-verdicts}.
+%       §6.4 exists and is labelled since 2026-09-26, so the vague pointer is no longer needed and
+%       both groups' ruling sites are now named the same way.
+%   (ii) THE 0.02 SENTENCE IS DELETED -- "Throughout, two scores differing by 0.02 or less are
+%       reported as indistinguishable rather than as one exceeding the other." His instruction, and
+%       it was the one sentence in the thesis that gave the limit CHAPTER-WIDE scope: the limit is
+%       the relevance judge's and governs retrieval scores alone (§4.4, §5.1), and §6.1 says in
+%       terms that generation scores are read as reported with no equivalent limit. "Throughout"
+%       therefore claimed more than §4.4 measured. ⚠ Chapter 1 now states NO reading rule at all;
+%       §5.1 states it for retrieval and §4.4 in full, so no verdict loses its basis, and §15
+%       O-19 (b)'s "Chapter 1 needs no edit" is answered by deletion rather than by rewording.
+%   The five generation hypotheses still carry \hfill Chapter~\ref{ch:generation} rather than a
+%   §6.3.x pointer -- the TODO above stands, and it is a separate write.
+
+\section{Research questions}\label{sec:intro-rqs}
+
+Three questions organise the work. The first asks whether structure-aware formula indexes improve
+answer retrieval over text alone, and whether the way they are combined governs the result. The
+second asks how much the retrieved context of the resulting retriever improves the answers a
+generator produces, and how faithful those answers are to it. The third checks that the second's
+answers do not depend on the size of the generator. Retrieval and generation are kept apart
+deliberately, each answered in a chapter of its own, so that retrieval is settled before generation
+is opened.
+
+\begin{description}[leftmargin=3.2em,style=nextline]
+  \item[\textbf{RQ1}] Does adding structure-aware formula indexes to text-only retrieval improve
+    answer retrieval on mathematical questions, and does the way those indexes are combined govern
+    the effectiveness of the resulting multi-index retriever?
+    \hfill Chapter~\ref{ch:retrieval}
+\end{description}
+
+\begin{description}[leftmargin=5.6em,style=nextline,topsep=0.2em]
+  \item[\textbf{RQ1.1}] Does adding one formula index to the strongest text-only retrieval improve
+    answer retrieval?
+  \item[\textbf{RQ1.2}] Does adding all three formula indexes to the strongest text-only retrieval
+    improve answer retrieval, and improve on adding one, and does the way they are combined make a
+    difference?
+\end{description}
+
+\begin{description}[leftmargin=3.2em,style=nextline]
+  \item[\textbf{RQ2}] To what extent does the retrieved context of the best multi-index retriever
+    of RQ1 improve the factual correctness of generated answers over generation without retrieval
+    and over the strongest text-only retrieval, how faithful are those answers to that context, and
+    do both rise with the quality of the retrieval that supplied it?
+    \hfill Chapter~\ref{ch:generation}
+\end{description}
+
+\begin{description}[leftmargin=5.6em,style=nextline,topsep=0.2em]
+  \item[\textbf{RQ2.1}] Does the context of the best multi-index retriever of RQ1 make answers more
+    factually correct than generation without retrieval, and more factually correct and more
+    faithful than the strongest text-only retrieval?
+  \item[\textbf{RQ2.2}] Across all the retrieval systems compared in RQ1, do factual correctness and
+    faithfulness rise with retrieval quality?
+\end{description}
+
+\begin{description}[leftmargin=3.2em,style=nextline]
+  \item[\textbf{RQ3}] Do the answers to RQ2 hold as the generator grows from 1.5 to 7~billion
+    parameters?
+    \hfill Chapter~\ref{ch:generation}
+\end{description}
+
+Two further conditions have to hold before any answer to these questions can be trusted, and
+neither is a research question in its own right. Both are established in the experimental setup.
+
+\begin{description}[leftmargin=3.2em,style=nextline]
+  \item[\textbf{P1}] The evaluation pipeline reproduces the organisers' published figures on their
+    own baseline run (Section~\ref{sec:met-calibration}).
+  \item[\textbf{P2}] Retrieval built after the test collection was assembled can nonetheless be
+    scored on a judgment pool it never contributed to --- through hole-rate reporting, prime
+    metrics and a relevance judge validated before it is relied upon
+    (Section~\ref{sec:met-judge-validation}).
+\end{description}
+
+\section{Hypotheses}\label{sec:intro-hypotheses}
+
+The hypotheses divide as the questions do, into one group for retrieval and one for generation.
+Each is stated as a positive prediction that the data is free to reject. The retrieval hypotheses
+are ruled in Section~\ref{sec:ret-verdicts} and the generation hypotheses in
+Section~\ref{sec:gen-verdicts}.
+
+\subsection*{Retrieval}
+
+\begin{description}[leftmargin=3.2em,style=nextline]
+  \item[\textbf{H1.1} (RQ1.1)] Each formula index, added to the strongest text-only retrieval,
+    improves answer retrieval over that retrieval alone.
+    \hfill Section~\ref{sec:res-add-one}
+  \item[\textbf{H1.2} (RQ1.2)] Adding all three formula indexes improves answer retrieval.
+    \textbf{(a)}~The three-index system improves on the strongest text-only retrieval.
+    \textbf{(b)}~It improves on adding one.
+    \hfill Section~\ref{sec:res-add-three}
+  \item[\textbf{H1.3} (RQ1.2)] How the indexes are merged makes a difference: merging the three
+    formula indexes into one vote before fusing, \emph{blocked}, beats letting each of them vote
+    separately, \emph{flat}.
+    \hfill Section~\ref{sec:res-fusion}
+  \item[\textbf{H1.4} (RQ1.2)] Every index contributes: removing any one of them makes the fused
+    system worse.
+    \hfill Section~\ref{sec:res-ablation}
+\end{description}
+
+\subsection*{Generation}
+
+\begin{description}[leftmargin=3.2em,style=nextline]
+  \item[\textbf{H2.1} (RQ2.1)] With the prompt held fixed, the multi-index retriever's context
+    makes answers more factually correct than generation without retrieval.
+    \hfill Section~\ref{sec:gen-res-context}
+  \item[\textbf{H2.2} (RQ2.1)] The multi-index retriever's context makes answers both more
+    factually correct and more faithful than the strongest text-only retrieval's context.
+    \hfill Section~\ref{sec:gen-res-context}
+  \item[\textbf{H2.3} (RQ2.2)] The better the retrieved context, the more the answer relies on it:
+    faithfulness rises with the quality of the retrieved context across configurations.
+    \hfill Section~\ref{sec:gen-res-tau}
+  \item[\textbf{H2.4} (RQ2.2)] The better the retrieved context, the more correct the answer:
+    factual correctness rises with the quality of the retrieved context across configurations.
+    \hfill Section~\ref{sec:gen-res-tau}
+  \item[\textbf{H3.1} (RQ3)] The conclusions of RQ2 are not specific to the smallest generator.
+    \textbf{(a)}~Each comparison RQ2.1 makes keeps its direction at 3~billion and 7~billion
+    parameters. \textbf{(b)}~Factual correctness and faithfulness still rise with retrieval quality
+    at both sizes.
+    \hfill Section~\ref{sec:gen-res-sizes}
+\end{description}
+
+% --- §1.5 and §1.6 written 2026-09-27.  Drafted in the chat as prose and approved before this
+%   write (CLAUDE.md §2, steps 5-6).  Snapshot: chapter_01_introduction.pre1516.bak.tex.
+%
+% §1.5 -- FOUR points, Abram's selection and his own wording for two of them, polished.  The list
+%   shape follows the one he gave from a fellow student's thesis: a one-line lead-in, then a
+%   numbered list whose items open on a noun phrase.  ~210 words, cut from a five-point ~400-word
+%   draft.  enumerate settings match §7.2 and §7.3 so the thesis's numbered lists read alike.
+%
+% WHAT THE FOUR POINTS CLAIM, against manifest §1d:
+%   1 = C1, the architecture and the comparison of merge arrangements.
+%   2 = C3 NARROWED to the judge validation alone.  §1d's C3 also covers hole-rate reporting, the
+%       prime measures and the demonstration that the scoring convention decides the apparent
+%       quality of a high-hole-rate ranking (claim C-4).  Chapter 1 claims none of that half; it is
+%       argued in §5.3, which stays C-4's only site.
+%   3 = C4, the containment diagnostic.
+%   4 = C5, REWORDED.  ⚠ §1d suspends C5 and §15 O-1 lists it as blocked; both rest on O-F, the
+%       prompt asymmetry, which the v3 re-run closed (§15 O-23, 2026-09-26, and §9b's note).  Every
+%       Chapter 6 figure now comes from R9, so the suspension is spent.  §1d's C5 wording -- that
+%       retrieval gains attenuate below detectability at the generation stage -- is NOT what R9
+%       shows and is superseded by C-7 as reworded 2026-09-27; this point therefore claims the
+%       MEASUREMENT and states no outcome.  Manifest §1d and O-1 updated with this write.
+%   ⚠ C2 IS CLAIMED NOWHERE IN CHAPTER 1 (Abram, 2026-09-27): the from-scratch formula stack and its
+%       check against a published formula-search system.  It survives as §2.2's closing sentence and
+%       as §5.3's component guard, so nothing dangles, but the contributions list no longer carries
+%       one of the two Exposé contributions.
+%
+% BANS HONOURED, each of which changed a drafted sentence:
+%   - Point 1 does NOT ask whether the merge or its components matters more.  Abram's draft wording
+%     was "whether the fusion or the components of the fusion matters the most"; that is the
+%     comparison §1c-i rules out (CLAUDE.md §4 names this exact sentence) and "matters most" is
+%     review E4's ranking clause, swept to zero in Chapter 5.  It reads instead that both are varied
+%     one at a time and both decide the outcome, which is §5.6's own conclusion.
+%   - NO FIGURE anywhere in §1.5, so nothing here can go stale against the registry.
+%   - NO COINED TERM: not blocked, flat, formula block, fanout, floor, configuration, judge pool,
+%     prime, path tuple, SLT or OPT, and not reciprocal rank fusion -- all are defined between
+%     Chapter 3 and §6.2, thirty to fifty pages later, and §15 O-20 (b) is still open because §1.1
+%     and §1.2 are unwritten.  Each is described instead.  Tighten to the terms once §1.1-§1.2
+%     establish them.
+%   - Point 4's third sentence says the measurement is REPEATED at two larger generators as a check
+%     that its answers are not specific to the smallest -- RQ3 as §1b, §6.1 and §6.3.4 state it.  The
+%     drafted "so that what a context adds is separable from what the generator already holds" was
+%     cut on Abram's reading: it describes a decomposition the thesis never performs.
+%
+% ⚠ THE EMERGENT FLAG IS NOT STATED.  Manifest §5 row 1.5 asks that the contributions not planned in
+%   the proposal be flagged; three of these four are.  Offered twice in the chat as one sentence --
+%   "The first of these was set out at the beginning of the work; the other three emerged from it" --
+%   and not taken.  Left out; manifest §5 row 1.5 records it as unmet.  A form naming the Exposé
+%   directly is ruled out anyway by the §7.2 precedent of 2026-09-27, where "and the proposal this
+%   work began from asked about it" was cut for pointing the reader at a document they have not seen.
+%
+% ⚠ THE THREE SCOPE DECISIONS STILL HAVE NO HOME.  §1c-i and §10 expect no significance testing, no
+%   comparison with published answer-retrieval systems, and retrieval reported under the judge's
+%   labels alone to be stated in §1.6.  A 180-word road map cannot carry them and Chapter 1 has no
+%   scope section, so with §7.2 also written without them the thesis states none of the three.
+%   Raised twice in the chat and open.
+\section{Contributions}\label{sec:intro-contributions}
+
+The main contributions of this thesis are as follows.
+
+\begin{enumerate}[leftmargin=1.7em,itemsep=0.7em,topsep=0.5em]
+
+\item The construction of three structure-aware formula indexes beside a sparse and a dense text
+index, and a systematic comparison of the ways their rankings can be combined. Two things are
+varied one at a time: how the three formula rankings enter a combination, and which indexes are in
+it. Both decide what the combined system retrieves.
+
+\item The validation of a language model as a relevance judge on the collection's four-level
+relevance scale. Whether its labels order systems as the assessors' labels do is tested separately
+from whether it agrees answer by answer, and the smallest difference between two scores it can
+resolve is measured and then applied wherever two systems are compared.
+
+\item A diagnostic for whether a retrieval signal matches what a task counts as relevant. It
+contrasts how far the signal separates relevant from non-relevant answers over a topic's whole
+judged set with how far it separates them among the best-matching answers, where a ranking is
+decided.
+
+\item An end-to-end measurement of what a difference in retrieval reaches in the generated answer.
+Every retrieval system compared here supplies a context to one generator under one prompt, beside
+answers written with no context at all, so that two things can be set against retrieval quality:
+how much of an answer is drawn from its context, and whether what it says is correct. The
+measurement is repeated at two larger generators, as a check that its answers are not specific to
+the smallest.
+
+\end{enumerate}
+
+% §1.6 -- 178 words against Abram's 180-word limit, one or two sentences per remaining chapter
+%   (manifest §5 row 1.6).  Seven chapters in seven sentences across six paragraphs, Chapters 7 and 8
+%   sharing the last.
+% EVERY chapter is named by \ref against its semantic key, never as a literal number: the repo rule
+%   is that no chapter or table number is written out in the source (CLAUDE.md §6), and a road map is
+%   the one place a stale number would be invisible.  Keys used: ch:related-work, ch:background,
+%   ch:setup, ch:retrieval, ch:generation, ch:discussion (Chapter 7, "Concluding remarks" -- the key
+%   predates the rename and a key is not prose) and ch:ai-usage.
+% Navigational by design, which is what a structure section is; §3's argumentative test governs
+%   forward references inside a chapter, not this one.  Each sentence says what the chapter DOES, so
+%   no sentence is merely a title restated: Chapter 4's names the two preconditions, Chapter 5's the
+%   five moves of its argument, Chapter 6's the two measures without naming them.
+% No outcome, no verdict, no hypothesis ID and no figure -- the reader meets those in their chapters.
+% Deliberately NOT here: the RQ-to-chapter mapping (§1.3 carries it with its \hfill pointers) and the
+%   three scope decisions (see the §1.5 note above).
+\section{Structure of the thesis}\label{sec:intro-structure}
+
+Chapter~\ref{ch:related-work} sets this work against research on mathematical information
+retrieval, formula retrieval systems, retrieval-augmented generation and evaluation with incomplete
+judgments, and closes on the gap these questions address.
+
+Chapter~\ref{ch:background} defines what the rest of the thesis uses: the collection and its two
+tasks, formula representations, indexing, retrieval and fusion, and the measures for a ranking and
+for a generated answer.
+
+Chapter~\ref{ch:setup} fixes what the two experimental chapters share: the topics and judgments,
+the corpus as the system reads it, the system end to end, and the two preconditions.
+
+Chapter~\ref{ch:retrieval} answers the first question: it builds the systems compared, answers two
+threats to their scores, reports the results, locates where the formula signal lies, and rules on
+each retrieval hypothesis.
+
+Chapter~\ref{ch:generation} answers the second and the third, generating answers from those
+systems' contexts and scoring each for its correctness and for how much of it came from that
+context.
+
+Chapter~\ref{ch:discussion} summarises what the two answers say together, what they leave
+unsettled, and where the work goes next. Chapter~\ref{ch:ai-usage} declares the use of AI tools.

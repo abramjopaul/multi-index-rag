@@ -1,0 +1,92 @@
+% Chapter 6 section 6.4: the verdicts. Written 2026-09-26, drafted in the chat over three passes
+%   and approved before this write (CLAUDE.md §2 steps 5-6).
+% Shape mirrors §5.6 (manifest §9b): bold lead-ins, ~one page, no float, SUPPORTED / NOT SUPPORTED
+%   only -- the three-point scale was dropped 2026-09-25 and "partially supported" is not used.
+% Rules on H2.1, H2.2, H2.3, H2.4 and H3.1 against the decision rules of §1c, and answers RQ2.1,
+%   RQ2.2, RQ3 and RQ2. Numbers are kept to what anchors a verdict: Abram's instruction was that
+%   this section carry the argument as a story, not as a second pass over §6.3's tables.
+% H3.1 is read against its clause (a) AS RESTATED 2026-09-26 -- each of RQ2.1's three comparisons
+%   keeping its direction (manifest §1c). The verdict is the same under either wording; the wording
+%   matters only so that "not supported" does not read as a blanket failure. RQ2.1 replicates at 3B.
+% ⚠ H3.1's ORIGIN DISCLOSURE IS NOT HERE. Abram's instruction, 2026-09-26: the sentences naming the
+%   superseded runs come out. H3.1 was stated before its own data, so nothing post-hoc happened to
+%   the hypothesis itself; what IS owed is the clause (a) restatement, and that goes to §7.2 with
+%   H1.3's. Manifest §9b row 6.4 and §10's post-hoc row are repointed to §7.2 accordingly. If §7.2
+%   is written without it, the thesis discloses neither -- check when §7.2 lands.
+% ⚠ ONE SENTENCE KEPT ON ABRAM'S EXPLICIT INSTRUCTION, against a reservation I raised in the chat
+%   (2026-09-26): "How much of a context gets used follows from how pertinent it looks, which is
+%   close to what a retrieval score measures." nDCG'@10 is computed under the judge labels, and
+%   answer retrieval is graded on whether a post RESOLVES the question (§3.1, and §5.6 says so), so
+%   "how pertinent it looks" is not a description of what the score measures. Four alternatives were
+%   offered and this wording was chosen. Revisit if an examiner or the supervisor stops on it.
+% Not here: the attenuation arc C-7 -- a retrieval difference reliable at the retrieval stage not
+%   surviving into generation -- which needs both RQs and is §7.1's (manifest §10). Nothing from the
+%   retired ladder. No third grade. No float.
+
+% ⚠ WORDING REPAIRED 2026-09-27 (Abram), with the §7.1 write. Two changes in the first lead-in.
+%   (i) "they land above the floor because the generator has effectively fallen back on its own
+%   knowledge" -> "they are not dragged below the floor with it": the causal clause explained a
+%   five-topic tail as though it were a level (see `_sec63_results.tex`'s note), and the two short
+%   sentences after it already carry the mechanism, so the paragraph was explaining itself twice.
+%   (ii) "A context it uses and that does not hold the answer costs it the answer." -> "A context it
+%   draws on costs it the answer when the answer is not there." -- Abram's choice from three options;
+%   the old sentence stacked two relatives on one omitted pronoun. §7.1 uses the same "not dragged
+%   below" wording. Snapshot `_sec64_rq2_verdicts.preFloorWording.bak.tex`.
+\section{What this settles about RQ2 and RQ3}\label{sec:gen-verdicts}
+
+Section~\ref{sec:gen-results} ran three experiments, and each of them decides a hypothesis. A
+retrieved context does reach the answer, and it reaches it in proportion to how good the retrieval
+was. What it reaches is how much of the answer the generator borrows, and borrowing more is not the
+same as being right more often.
+
+\textbf{Whether a retrieved context helps at all.} H2.1 predicted that the multi-index retriever's
+context makes answers more factually correct than generation without retrieval. It does: 0.206 FC-P
+against the floor's 0.170 over the 78 topics of Section~\ref{sec:met-collection}, ahead on 33 of
+them and behind on 23. H2.1 is supported. The result does not generalise to retrieval as such,
+though. Five of the fifteen configurations fall below the floor, and the configuration that escapes
+that pattern explains it: SLT-TYPE retrieves worst of all fifteen, its answers draw less on their
+context than any other, and they are not dragged below the floor with it
+(Figure~\ref{fig:gen-res-tau}). A context the generator ignores costs it nothing. A context it draws
+on costs it the answer when the answer is not there.
+
+\textbf{The multi-index retriever against text-only retrieval.} H2.2 predicted that its context
+makes answers both more factually correct and more faithful than the strongest text-only
+retrieval's. Only the second holds: 0.189 faithfulness against dense retrieval's 0.171, and 0.206
+FC-P against 0.241. H2.2 is not supported, and the answer to RQ2.1 is yes to its first half and no
+to its second. The two measures moving in opposite directions is the finding, and Chapter~5 has
+already named its cause. The formula rankings put posts in front of the generator that share the
+question's formulas, and Section~\ref{sec:res-transfer} established that formula containment
+identifies the right neighbourhood and cannot order inside it. The generator does what the ranking
+did: it treats those posts as pertinent and draws on them. Formula similarity attracts the
+generator's attention without carrying the answer.
+
+\textbf{Whether better retrieval reaches the answer.} H2.3 and H2.4 predicted that faithfulness and
+factual correctness rise with retrieval quality across the fifteen configurations. Both do, and
+both are supported, so the answer to RQ2.2 is yes. They do not rise equally: the ordering by
+retrieval quality and the ordering by faithfulness agree on 96 of the 105 pairs, $\tau = 0.829$,
+and by factual correctness on 83, $\tau = 0.581$. The chain from a retrieval score to a correct
+answer has two links and only the first is tight. How much of a context gets used follows from how
+pertinent it looks, which is close to what a retrieval score measures. Whether the answer comes out
+right depends on whether that context actually held the answer, which a retrieval score measures
+much less well.
+
+\textbf{Whether any of it survives a larger generator.} H3.1 predicted that the answers to RQ2 are
+not specific to the smallest generator. They are not robust to it. Every comparison holds its
+direction at 3 billion parameters and two of the three reverse at 7 billion, and factual
+correctness stops rising with retrieval quality at 3 billion altogether. H3.1 is not supported and
+the answer to RQ3 is no --- though what fails is narrower than that verdict sounds, since RQ2.1
+replicates cleanly at the middle size. The reason is visible in the floor: a generator that already
+holds more of the answer raises the bar a context has to clear, and at 7 billion parameters two of
+the five contexts fall below it.
+
+\textbf{RQ2 and RQ3 as a whole.} One fact sits underneath all of it. The highest faithfulness
+anywhere in this chapter is 0.225: in every configuration, at every generator size, most of what an
+answer says comes from the generator rather than from what was retrieved. Retrieval is a minority
+contributor to the text, and the rest follows from that. It is why the multi-index retriever's
+context can be drawn on more heavily and still produce less correct answers. It is why a clean
+ordering at the retrieval end arrives at the answer as a loose one. And it is why the whole effect
+thins as the generator grows and has more of its own to offer. Retrieval reaches the answer; it
+does not write much of it.
+
+Chapter~\ref{ch:discussion} takes up what the two chapters say together, and what this thesis could
+not measure.

@@ -1,0 +1,270 @@
+\chapter{Concluding remarks}\label{ch:discussion}
+
+% ⚠ RENAMED AND EXTENDED 2026-09-27, after Abram compared the chapter against the SoftLang template
+%   (Chapter "Concluding remarks" = Summary · Limitations or threats to validity · Future work).
+%   Chapter 7 is now titled "Concluding remarks" and §7.1 is "Summary", so Chapter 7 IS the
+%   template's concluding chapter and the three sections match it one to one. This also answers the
+%   gap left when Chapter 8's "Summary and outlook" was dropped the same day -- the thesis had no
+%   summary anywhere for about two hours.
+%   Labels UNCHANGED on purpose: ch:discussion is referenced by §6.4's closing sentence and
+%   sec:disc-findings by nothing outside this file; a key is not prose (CLAUDE.md §6).
+% ⚠ MANIFEST §10's "Do not restate the verdicts here" IS SUPERSEDED, not broken. That instruction was
+%   written for a Discussion section sitting between the RQ chapters and the limitations. The
+%   template's Summary brief is "summarize this work in an insightful manner, assuming that the
+%   reader has seen the rest", and a summary that withholds the findings is not one. §10 rewritten
+%   with this write.
+% THREE SUMMARY PARAGRAPHS ADDED in front of the three lead-ins, 302 words: what was built and asked ·
+%   what retrieval returned · what generation returned. No hypothesis ID and no RQ number anywhere --
+%   the summary assumes the reader has seen §5.6 and §6.4, so IDs would make it a second pass over
+%   them. Every figure is one those two sections already print.
+%   Abram's two edits on the draft, taken with the write: the generator size the generation numbers
+%   come from is stated, together with the 3-billion replication (§6.4's own nuance, that what fails
+%   is narrower than the verdict sounds); and the drafted closing pair -- "None of this survived a
+%   larger generator unchanged. Every comparison kept its direction at three billion parameters and
+%   two of the three reversed at seven billion." -- was cut as off-register for a summary and
+%   replaced by the mechanism, that a larger generator holds more of the answer itself.
+%   The old opening's first and third sentences went with the change: the summary now does the work
+%   they did, and only the transition sentence before the lead-ins survives.
+% Chapter 7 section 7.1: the discussion.  Written 2026-09-27, drafted in the chat as prose over
+%   three passes and approved before this write (CLAUDE.md §2 steps 5-6).
+% Shape mirrors §5.6 and §6.4: three bold lead-ins, ~450 words, no float.  It carries ONLY what
+%   needs both RQs at once (manifest §10) -- no verdict is restated, no hypothesis is named, and
+%   claim C-4 stays in §5.3.
+% Title is "Discussion", Abram's choice 2026-09-27, replacing the drafted "What the two stages say
+%   together" and the stub's "Findings".  Label sec:disc-findings kept -- a key is not prose.
+% Every figure is a registry number already printed in Chapter 5 or 6: containment leading on 70
+%   then 30 topics (R7); faithfulness 0.189 vs 0.171 and factual correctness 0.206 vs 0.241 (R9);
+%   the two concordances 96/105 and 83/105 (R9.B); blocked 0.551 against dense 0.557, 0.006 apart
+%   (R1.2, R3.6); SLT-TYPE 0.104 retrieval and 0.049 faithfulness (R3.5, R9).  Nothing new.
+% ⚠ C-7 AS WORDED IN THE REGISTRY IS SUPERSEDED BY THE SECOND LEAD-IN.  The registry said a
+%   retrieval gain reliable at the retrieval stage does not survive into generation; what the
+%   numbers support is the two-direction claim written here -- the ordering over the fifteen reaches
+%   attribution tightly and correctness loosely, AND a difference the retrieval measure cannot
+%   resolve separates the answers anyway.  Manifest §3 C-7 reworded with this write.
+% ⚠ "NOT DRAGGED BELOW" IS DELIBERATE and it is the honest form.  A per-topic check of the 1.5B
+%   per-sample score files (2026-09-27, DIAGNOSTIC ONLY -- not in the registry, not reported, not
+%   citable) shows SLT-TYPE's 0.196 against the floor's 0.170 is carried by five topics rescued
+%   from zero factual correctness, with a median per-topic difference of 0.000.  So "above the
+%   floor" overstates it, and "because the generator has effectively fallen back on its own
+%   knowledge" explains a five-topic tail as though it were a level.  §6.3.2 and §6.4 carry the
+%   matching one-clause repair.
+% Cut on Abram's instruction with the write: the two closing sentences of the third lead-in, which
+%   named the relevance criteria of §3.1 and prescribed that retrieval for community mathematical
+%   question answering deliver formula and prose together.  The third lead-in was retitled from
+%   "What a context for mathematical question answering has to carry" to match what remains -- say
+%   the word and it goes back.
+% The limitations section is named IN WORDS, not by \ref: sec:disc-limitations is still commented
+%   out below.  Convert to \ref when §7.2 lands (§6.3 did the same while §6.4 had no label).
+\section{Summary}\label{sec:disc-findings}
+
+This thesis built a retrieval-augmented system for mathematical question answering and asked what
+structure-aware formula retrieval contributes to it. Three indexes over formula trees were built
+beside a sparse and a dense text index, and the rankings they produce were merged in ten
+arrangements. Those arrangements were scored on answer retrieval over the 78 topics of the ARQMath-3
+collection, under the labels of a relevance judge validated before it was relied upon. The same
+fifteen configurations then supplied contexts to a generator, and its answers were scored for how
+much of each came from its context and how much of each was correct.
+
+Formula evidence did not improve answer retrieval. Each formula index added to dense retrieval left
+the system behind dense retrieval alone, and all three added together left it further behind still.
+How the rankings were merged did decide the outcome. Collapsing the three formula rankings into one
+vote before fusing beat letting each of them vote separately, 0.551 against 0.374, and that
+arrangement is the best multi-index retriever this thesis produced. It does not beat text-only
+retrieval. At 0.551 against dense retrieval's 0.557 the two are indistinguishable on both reported
+measures.
+
+A retrieved context did reach the answer. The multi-index context made answers more factually
+correct than generation without retrieval, 0.206 against 0.170, and both faithfulness and factual
+correctness rose with retrieval quality across the fifteen configurations. Against the strongest
+text-only retrieval the same context was drawn on more heavily and produced less correct answers:
+0.189 faithfulness against 0.171, and 0.206 factual correctness against 0.241. Both readings are
+taken at 1.5 billion parameters, and both hold at 3 billion. The gains thin as the generator grows:
+at 7 billion parameters a generator holds more of the answer itself, so a context has more to clear
+before it helps, and some of these comparisons run the other way.
+
+Three things follow from the two chapters read together, and none of them can be stated inside
+either one.
+
+\textbf{Formula overlap misleads a ranker and a generator alike.}
+Section~\ref{sec:res-transfer} located why formula evidence does not help answer retrieval. A
+topic's formulas are contained in the answers the assessors judged relevant more than in those they
+judged not relevant, leading on 70 of the 78 topics; among the best-matching answers, where a
+ranking is decided, that lead falls to 30. Formula matching finds the right neighbourhood and
+cannot order inside it. Chapter~\ref{ch:generation} shows the generator doing the same thing to the
+same posts. Under the multi-index retriever's context more of the answer is traceable to that
+context than under the strongest text-only retrieval's, 0.189 against 0.171, and less of what the
+answer says is correct, 0.206 against 0.241. The ranking treats formula overlap as pertinence and
+places those posts in front of the generator; the generator treats them as pertinent and draws on
+them. One signal misleads two stages in the same direction, and it reaches the second stage through
+the first.
+
+\textbf{What a retrieval score predicts about an answer.} Across the fifteen configurations of
+Section~\ref{sec:met-retrieval-configs} the ordering by the primary measure and the ordering by
+faithfulness are concordant on 96 of the 105 pairs, and the ordering by factual correctness on 83.
+A retrieval score predicts how much of an answer will come from its context more closely than it
+predicts whether that answer will be right. Where the measure resolves nothing, the answers still
+differ: the blocked system and dense retrieval are 0.006 apart on the primary measure, inside the
+0.02 of Section~\ref{sec:met-judge-validation}, and their answers separate on both generation
+measures, in opposite directions. The relation also does not hold evenly at the weak end. SLT-TYPE
+retrieves worst of the fifteen, at 0.104, and its answers are not dragged below generation without
+a retrieved context, while five configurations that retrieve better than it are. Almost nothing of
+its answers comes from its context, at 0.049 faithfulness, and a context that is not drawn on
+cannot carry an answer wrong. What decides the cost of a weak context is how heavily it is used,
+not how weak it is.
+
+\textbf{What formula evidence alone amounts to.} Section~\ref{sec:ret-verdicts} found that blocking
+earns its place by keeping formula evidence from doing harm rather than by supplying what the text
+rankings lack. Chapter~\ref{ch:generation} prices the evidence that still reaches the generator. The
+three configurations built from formula indexes alone are among the five whose answers fall below
+generation without a retrieved context. A well-matched formula, delivered without the prose that
+resolves the question, is not a usable context at either stage: the ranking cannot order inside the
+neighbourhood it finds, and the generator writes a worse answer from it than from nothing at all.
+
+Each of these readings rests on conditions measured once, on one collection, and scored by
+instruments this thesis validated rather than assumed. Section~\ref{sec:disc-limitations} states what that
+leaves unsettled.
+
+% Chapter 7 section 7.2: the limitations. Written 2026-09-27, rewritten the same day on Abram's
+%   reading of the first version: it was over-polished -- long sentences, abstract vocabulary,
+%   semicolon chains -- where the house voice is short declaratives carrying one fact each, with a
+%   longer sentence connecting them (CLAUDE.md §3). Snapshots `chapter_07_discussion.pre72.bak.tex`
+%   (the stub) and `chapter_07_discussion.pre72Simple.bak.tex` (the over-polished version).
+% FORM, all three on Abram's instruction 2026-09-27:
+%   (i) a NUMBERED LIST, not one subsection per threat -- superseding manifest §10's "one subsection
+%       per threat, each opening with a bold Threat to validity: <level> (<type>) label". tocdepth is
+%       2, so each subsection would spend a table-of-contents line on a three-sentence item, and
+%       limitations pass the house itemize test (swap any two, no inference breaks).
+%   (ii) NO validity type in brackets after the bold name. All five are construct threats; the label
+%       repeated five times carried nothing.
+%   (iii) NO opening paragraph -- the section goes straight into the list. What went with it: the
+%       sentence drawing the boundary against the guards ("the guards of §4.3, §4.4 and §5.3 defended
+%       the assumptions that evidence could defend; this section states the threats that remain"),
+%       which was the one place the thesis stated that boundary in prose, and the sentence saying all
+%       five are construct threats. Manifest §10's guard/limitation boundary is now kept only by
+%       where things sit, not by any sentence.
+% FIVE ITEMS, Abram's selection: the relevance judge · the generation reference · no human reading ·
+%   factual correctness and the length of an answer · answering efficiency. The last four are his own
+%   notes, polished.
+% ⚠⚠ THE POST-HOC DISCLOSURE IS NOT HERE, AND THIS WAS ITS ONLY SITE. Manifest §10's post-hoc row
+%   requires §7.2 to disclose that H1.3 was restated on 2026-09-20 with R3 in view, that H3.1's idea
+%   came from the retired ladder (and that the observation does not reproduce), and that H3.1's
+%   clause (a) was restated after its data in the direction that made it easier to pass. §5.6 carries
+%   no disclosure (Abram, 2026-09-21) and §6.4's was moved here (Abram, 2026-09-26). With §7.2
+%   written without it, THE THESIS DISCLOSES NONE OF THE THREE. Raised at the write, left out on his
+%   instruction, manifest §10 reopened. Add before submission.
+% ⚠ ALSO DROPPED on his instruction: what the retrieval measure scores against what Chapter 6 asks of
+%   it (which would have discharged the reservation flagged in `_sec64_rq2_verdicts.tex` -- still
+%   undischarged); one collection and one test year; the stack as built rather than optimised;
+%   choices stated as method and never varied; one run per condition with no statistical test. So
+%   §7.2 concedes no EXTERNAL and no INTERNAL threat at all.
+% The three scope decisions (no statistical test, no comparison with published answer-retrieval
+%   systems, retrieval reported under the judge's labels alone) are stated NOWHERE in Chapter 1 --
+%   it has no scope section. Manifest §10 expects them in §1.6. Nothing here cross-references them.
+% Numbers, all read from the live sources: Cohen's kappa 0.174 and the 38 official participant runs
+%   (§4.4); the 0.02 fuzziness value (§4.4, §5.1); up to five judged answers per topic (§6.2).
+% κ is referenced to §4.4, where its value for this judge is reported, and not also to §3.6, which
+%   defines it -- one pointer, per CLAUDE.md's localised-term rule.
+% Trimmed 2026-09-27 on Abram's reading (snapshot `chapter_07_discussion.pre72Trim.bak.tex`):
+%   (a) "the measure can therefore mark a correct answer down, and it cannot mark a wrong one up" ->
+%       "a missing route can only cost a correct answer; it cannot help a wrong one". Same one-way
+%       bias, said plainly; the old wording read as two operations on a score rather than one gap.
+%       Note the claim is deliberately about the MISSING ROUTE, not about the measure as a whole --
+%       a wrong answer with correct intermediate claims can still score well, so "it cannot make a
+%       wrong answer look right" would have been too strong.
+%   (b) "and the proposal this work began from asked about it" CUT -- it pointed the reader at a
+%       document they have not seen. ⚠ The efficiency item therefore no longer says WHY the omission
+%       is owed, so manifest §10's "concede it rather than dropping the word silently" is now met
+%       only by the item existing. Its last sentence was rebuilt to stand alone: it says nothing here
+%       shows how the system behaves under a query load, rather than leaving "that question" hanging.
+%   (c) the closing sentence handing over to §7.3 CUT. §7.2 now ends on the list, so the chapter has
+%       no sentence carrying the reader from the limitations into the future work -- against
+%       CLAUDE.md §3's "end a section by naming the problem the next one inherits". His call.
+% Never here: a guard (those are §4.3, §4.4 and §5.3), a definition, or a result.
+\section{Limitations}\label{sec:disc-limitations}
+
+\begin{enumerate}[leftmargin=1.7em,itemsep=0.7em,topsep=0.5em]
+
+\item \textbf{The relevance judge.} Every retrieval score in Chapter~\ref{ch:retrieval} is computed
+from labels a language model assigned. Section~\ref{sec:met-judge-validation} shows that the judge
+orders systems as the assessors do, which is what this thesis reads it for, and that it is lenient
+about individual labels, agreeing with them at a Cohen's $\kappa$ of 0.174. The scores therefore say
+which system is better, not how good any of them is. Two scores differing by 0.02 or less say nothing
+at all, and that limit was measured on the 38 official participant runs of one year. Whether it holds
+on another collection is untested.
+
+\item \textbf{The generation reference.} Factual correctness is measured against the union of up to
+five judged answers for each topic. A mathematics question usually has more than one route to the
+result. Those five answers may take several of those routes or may all take the same one, and either
+way they do not cover every route. An answer that is right by a route none of them takes counts as
+unsupported.
+
+\item \textbf{No human reading of the generated answers.} Both generation measures are computed by
+the evaluation framework's own language model. Section~\ref{sec:met-judge-validation} validates the
+relevance judge, and Section~\ref{sec:gen-method} says that this is a different instrument doing a
+different task. Nothing here shows that these factual-correctness scores agree with a mathematician
+reading the same answers. Nothing here judges an answer as a whole either. Both measures work over
+the separate claims an answer is split into, so no result in Chapter~\ref{ch:generation} says that an
+answer is right or that it is wrong.
+
+\item \textbf{Factual correctness and the length of an answer.} Factual-correctness precision is the
+share of an answer's claims that the reference supports. A longer answer makes more claims, and each
+further claim is one the reference may not cover. A low score can therefore come from length rather
+than from error. Nothing holds the answers to a common length, and the length they run to differs from
+one condition to the next. Some of what separates two conditions may be how much each answer said.
+
+\item \textbf{Answering efficiency was never measured.} How fast a system answers is part of whether
+it can be used. Every run reported here was made offline, in batch. No latency was timed and no query
+throughput was counted, so nothing here says how the system would behave under a query load.
+
+\end{enumerate}
+
+% Chapter 7 section 7.3: future work. Written 2026-09-27, drafted in the chat and approved with
+%   edits before this write (CLAUDE.md §2 steps 5-6). Snapshot `chapter_07_discussion.pre73.bak.tex`.
+% THREE ITEMS, Abram's own (he said "two of them" and listed three; all three were drafted and he
+%   kept all three): prompt tuning · which formula to query with · one representation for a formula
+%   and its prose. Numbered list, no opening paragraph -- the same form as §7.2, so the chapter reads
+%   as one piece.
+% Each item names the finding it follows from, so none of it is a wish list: item 1 from the single
+%   prompt of §6.2 and the 0.225 faithfulness ceiling (§6.4, registry R9.A); item 2 from fanout (§4.3,
+%   §5.2.2) and §5.5's erosion at the narrow end; item 3 from §7.1's third reading.
+% "ATTENTION" IS USED BARE, on Abram's instruction 2026-09-27 -- "use attention word only, it is easy
+%   and direct". ⚠ Chapter 3 does not define it and there is no definition site anywhere, so this is
+%   a term used before it is defined, which is the defect the first-draft review named. Defensible
+%   here because §7.3 measures nothing and names a direction rather than a method; flagged in case an
+%   examiner stops on it. The drafted paraphrase that avoided the word was "a model that weighed each
+%   formula in a question against the words around it".
+% CUT on his instruction with the write, both closing sentences:
+%   (i) item 2's "Section 5.5's diagnostic is the measure to test it against: the separation between
+%       relevant and non-relevant answers holds over a topic's whole judged set and erodes among the
+%       best-matching answers, which is where a ranking is decided." So item 2 proposes the direction
+%       without naming how it would be evaluated.
+%   (ii) item 3's "The learned systems of Section 2.2 already take that shape and lead at formula
+%       search, and nothing here tests whether they carry to answer retrieval." So §7.3 cites no
+%       related work and SSEmb is not named here -- the honest concession against it now rests on
+%       §2.2 alone, since the §7.2 item that conceded no retriever training was also dropped.
+% The chapter now ends on "would not need the merge at all", which is what Chapter 8 picks up.
+\section{Future work}\label{sec:disc-future-work}
+
+\begin{enumerate}[leftmargin=1.7em,itemsep=0.7em,topsep=0.5em]
+
+\item \textbf{Tuning the answer-generation prompt.} This thesis presents one prompt and holds it
+fixed, so that what separates its conditions is the context and nothing else. That leaves the prompt
+itself unexamined. The highest faithfulness anywhere in Chapter~\ref{ch:generation} is 0.225, so most
+of every answer comes from the generator rather than from what was retrieved. A prompt that directs
+the generator more firmly at its context would raise that share, and whether it also raises factual
+correctness is the question to put to it.
+
+\item \textbf{Choosing which formula to query with.} The formula indexes here are queried with every
+non-trivial formula a topic contains. Section~\ref{sec:res-transfer} shows what that costs. With so
+many query formulas, almost every plausible answer matches one of them, and the ranking has little
+left to order them by. An attention mechanism over the question, trained to score each formula by how
+much of the question it carries, would pick the one or two that matter and query with those.
+
+\item \textbf{One representation for a formula and its prose.} Every configuration in this thesis
+keeps the two apart. Text rankings and formula rankings are produced separately and then merged, and
+Section~\ref{sec:disc-findings} gives the reason that arrangement can only go so far: a formula match
+locates the right neighbourhood, and the words around the formula decide which answer in it resolves
+the question. A retriever trained to embed a post as one object, with its formulas and its prose in a
+single representation, would not need the merge at all.
+
+\end{enumerate}

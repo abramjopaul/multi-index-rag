@@ -1,0 +1,602 @@
+\chapter{Theoretical Background}\label{ch:background}
+
+\section{The ARQMath collection and tasks}\label{sec:bg-arqmath}
+
+Every experiment in this thesis is run on the ARQMath test collection, so its
+properties determine what can and cannot be measured here. This section describes
+the corpus, the two retrieval tasks it defines, and the relevance criteria behind
+each.
+
+ARQMath is a community question answering (CQA) collection built from a March
+2020 snapshot of Mathematics Stack Exchange, covering questions and answers
+posted between 2010 and 2018~\cite{zanibbi2020arqmath}. It contains roughly
+one million questions and 28 million formula instances, each formula carrying
+a unique identifier and distributed alongside pre-computed \LaTeX{},
+Presentation MathML and Content MathML representations. All three lab editions
+--- ARQMath-1 (2020), ARQMath-2 (2021) and ARQMath-3 (2022) --- search the same
+collection of posts, and differ in their topics, their relevance judgments, and the
+corrections the organisers made to the formula
+representations~\cite{mansouri2022arqmath3}.
+
+Answer retrieval (ARQMath Task~1) asks a system to rank up to 1{,}000 answer
+posts for a mathematical question. Each edition draws its topics from questions
+posted to Mathematics Stack Exchange after the corpus snapshot, so their own
+answers are not in the collection --- ARQMath-3's come from 2021 --- and only
+answer posts from 2010--2018 are searchable. Candidate topics had to contain at
+least one formula and have at least one moderator-annotated duplicate question
+inside the collection, so that assessment effort was not spent on topics with no
+relevant answer at all~\cite{mansouri2022arqmath3}. For ARQMath-3, 100 topics
+were released, 80 were assessed, and two were removed because only a single
+answer had been judged relevant, leaving 78 topics in the evaluated test
+collection~\cite{mansouri2022arqmath3}.
+
+Formula search (ARQMath Task~2) takes a single formula from one of those
+questions as the query and returns formula instances drawn from both questions
+and answers. Both post types are searched because a retrieved formula is only
+ever a route to text: one occurring in an answer may sit in a worked solution,
+and one occurring in another question routes the searcher to that question's own
+answers, so restricting the search to answers would discard half the routes to
+useful material. The ARQMath-3 test collection has 76 assessed
+topics~\cite{mansouri2022arqmath3}. Relevance is contextual: a candidate formula
+is judged inside the post it appears in, and the query formula inside the
+question it was taken from. Evaluation is performed over \emph{visually
+distinct} formulae rather than instances --- those that render identically are
+clustered under a shared visual identifier and credited once --- so retrieving
+twenty copies of the same expression earns no additional
+reward~\cite{mansouri2021effects}. A third pilot task, open-domain question
+answering, was introduced in 2022 and is not used here.
+
+Both tasks use the same four relevance levels but define them differently, and
+the difference is the point. In answer retrieval, an answer is High if it is
+sufficient to answer the complete question on its own, Medium if it provides
+some path towards a solution, Low if it only helps find or interpret an answer,
+and otherwise Not relevant --- a level the criteria explicitly extend to any
+post that restates the question without adding
+information~\cite{mansouri2022arqmath3}. In formula search, a formula is High if
+it is as good as an exact match to the query would have been, Medium if useful
+but less so, and Low if there is some chance of finding something useful through
+it~\cite{mansouri2022arqmath3}. Answer-retrieval relevance is thus the extent to
+which an answer resolves the question, and formula search asks how likely a
+formula is to lead a searcher to text that helps answer the question its query
+was taken from. Neither is structural similarity: a formula matching the query
+symbol-for-symbol can be judged non-relevant if its post is unhelpful, and a
+structurally dissimilar formula can be highly relevant. They are not equally far
+from it, though. The formula-search scale uses an exact match as its reference
+point: a formula earns the top grade when finding it would have been as useful
+as finding the query formula itself. A system that ranks by structural closeness
+is ranking candidates by how near they come to that exact match, so the system
+and the scale are pointed at the same thing. The answer-retrieval scale never
+mentions formulas at all.
+
+Two binarisations of these levels recur throughout. \emph{H+M} counts only High and
+Medium as relevant, matching the usual TREC notion, while \emph{H+M+L} additionally
+counts Low; binary measures in this thesis use H+M, that is, relevance level 2
+(Section~\ref{sec:bg-retrieval-metrics}).
+
+Judgments were produced by pooling over the participants' \emph{runs}. A run is
+the ranked list of answers a participating system submits for every topic; each
+team designates one of its runs as primary and the others as alternate. For each
+topic the organisers took the top 45 results of every primary run and the top 20
+of every alternate run, merged and deduplicated them, and had trained assessors
+judge the result, yielding pools averaging 464 answers per topic for answer
+retrieval in ARQMath-3~\cite{mansouri2022arqmath3}. The judgments are
+distributed as \emph{qrels} (query relevance judgments), one entry per judged
+topic--document pair carrying its grade, so a qrels file records the pool as
+well as the grades: a document is judged exactly when it has an entry. The pool
+is therefore defined by what the 2022 participants retrieved, and any document
+outside it is unjudged rather than non-relevant. Such documents are called
+\emph{holes}, and the fraction of a ranking's top-ranked results that consists
+of them is its \emph{hole rate}, made precise at a cutoff in
+Section~\ref{sec:bg-retrieval-metrics}; incomplete judgments of this kind are a
+long-standing problem in pooled evaluation~\cite{buckley2004incomplete}. The
+organisers' response was to adopt measures that ignore holes rather than scoring
+them as irrelevant: the primary measure for both tasks is $\mathrm{nDCG}'$, the
+prime variant of Sakai and Kando~\cite{sakai2008prime}, with $\mathrm{MAP}'$ and
+$\mathrm{P}'@10$ as secondary measures. That convention suffices for the systems
+that were pooled, but not for a system built afterwards, which retrieves
+documents no 2022 participant retrieved and therefore carries a far higher hole
+rate; Sections~\ref{sec:bg-retrieval-metrics} and~\ref{sec:met-judge-validation}
+take up that gap.
+
+\section{Formula representations}\label{sec:bg-formula-representations}
+
+A formula written in \LaTeX{} is a string, and string matching cannot see that
+$x - y^2$ and $a - b^2$ are the same expression under different names. Retrieving
+on structure therefore requires parsing the formula into a tree first. \LaTeX{} is
+presentation source: it fixes which symbols appear and where they sit on the page,
+but encodes no structure a parser can read off directly. \emph{Mathematical
+markup} does encode it, and the standard for it is MathML, an XML language for
+mathematics that comes in two flavours. Those two flavours support two different
+trees, and the difference between them runs through the rest of this thesis:
+Presentation MathML records how a formula is laid out on the page, while Content
+MathML records what it computes. ARQMath
+distributes both for every formula in the collection
+(Section~\ref{sec:bg-arqmath}), so the trees can be read from the collection
+rather than parsed out of \LaTeX{}.
+
+The \emph{Symbol Layout Tree} (SLT) is derived from Presentation MathML and
+encodes spatial arrangement. Its nodes are the symbols of the formula and its
+edges are the spatial relations between them --- one symbol follows another on the
+same baseline, or sits above it as a superscript, or below it, or within a
+structure such as a radical.
+
+The \emph{Operator Tree} (OPT) is derived from Content MathML and encodes
+operator--operand structure instead. Its root is the top-level operator or
+relation, its internal nodes are the remaining operators, and its leaves are
+operands; each edge records which argument of its parent the child is. The OPT
+recognises $y^2$ as an exponentiation however it was typeset, but no longer knows
+what the expression looked like.
+
+Both trees are linearised the same way. Following
+Tangent-CFT~\cite{mansouri2019tangentcft}, which extends the symbol pairs of
+Tangent-S~\cite{davila2017tangents} with the path from the root, a depth-first
+traversal converts a tree into a list of \emph{path tuples}, each pairing a node
+with one of its descendants, and every tuple, in either representation, has the
+same four positions:
+
+\begin{description}[leftmargin=4.2em,style=sameline,itemsep=0.15em,topsep=0.4em]
+  \item[\textmd{\texttt{[0]}}] a node;
+  \item[\textmd{\texttt{[1]}}] a node that descends from it;
+  \item[\textmd{\texttt{[2]}}] the edge labels on the path from the first to the second;
+  \item[\textmd{\texttt{[3]}}] the path from the root of the tree to the first node.
+\end{description}
+
+\noindent
+What fills those positions is what separates the two representations. In an SLT,
+positions \texttt{[0]} and \texttt{[1]} hold a symbol written with its type ---
+\texttt{V!x} for the variable $x$ and \texttt{N!2} for the number $2$, with
+\texttt{!} separating type from value --- while operators such as the minus sign
+appear as the bare symbol \texttt{-}. Position \texttt{[2]} names the spatial
+relation: \texttt{n} for the next symbol on the same baseline, \texttt{a} for
+above, \texttt{b} for below, \texttt{w} for within, among others. Position
+\texttt{[3]} is then the sequence of those relations taken from the root, so
+\texttt{nn} is two steps along a baseline, and a tuple whose first node \emph{is}
+the root carries \texttt{-}. In $x - y^2 = 0$, for instance, the tuple
+\texttt{(V!y, N!2, a, nn)} records that the $2$ sits above the $y$, and that the
+$y$ lies two steps along the baseline from the root.
+
+An OPT fills the same four positions differently. Its operators are marked for
+whether the order of their arguments matters: the subtraction in $x - y^2 = 0$
+becomes \texttt{O!minus}, because $x - y^2$ and $y^2 - x$ are different, and the
+equality becomes \texttt{U!eq}, because $x - y^2 = 0$ and $0 = x - y^2$ are not.
+Position \texttt{[2]} gives the argument index, \texttt{0} for the first argument
+and \texttt{1} for the second, and position \texttt{[3]} the sequence of those indices
+from the root, so \texttt{01} is the first argument of the root followed by the
+second of its child. In the same formula, \texttt{(O!SUP, N!2, 1, 01)} records that
+the $2$ is the second argument of the exponentiation, which itself sits at
+\texttt{01}: it is the second argument of the subtraction, and the subtraction is
+the first argument of the equality.
+
+Both close their paths with a dummy marker, written \texttt{0!} --- at the end of
+each baseline in an SLT, and at each leaf in an OPT --- so that short expressions
+still produce matchable tuples.
+
+How far from a node the traversal looks is set by a \emph{window}. With a window of
+one, a node is paired only with its children, so the SLT of $x - y$ yields, besides
+its end marker, \texttt{(V!x, -, n, -)} and \texttt{(-, V!y, n, n)}. With a window
+of two, each node is also paired with the descendants two edges away, and $x - y$
+yields \texttt{(V!x, V!y, nn, -)} as well, with position \texttt{[2]} recording
+both steps. A wider window captures relations between symbols further apart, at the
+cost of more tuples per formula.
+
+The third representation, \emph{SLT-TYPE}, is the SLT with its values erased and
+only the node types kept: every variable collapses to \texttt{V!} and every number
+to \texttt{N!}, so that \texttt{(V!x, -, n, -)} becomes \texttt{(V!, -, n, -)}.
+Operators carry no type marker in an SLT and so survive intact: what is forgotten
+is which symbols the operators act on, not the operators themselves. This makes
+$x - y^2$ match
+$a - b^2$ exactly, which is the intent, and also makes $x + x$ indistinguishable
+from $x + y$, which is the cost.
+
+The three representations therefore sit on an abstraction ladder. SLT is the most
+literal and matches on appearance; OPT ignores notation but keeps operator
+identity; SLT-TYPE keeps the operators and forgets the symbols they act on. Each
+representation finds more formulas that are written differently but are related to
+some extent. Which step is the better trade-off cannot be settled by argument; it
+has to be measured. Tangent-CFT sidesteps the choice altogether by summing the
+vectors of all three representations into one~\cite{mansouri2019tangentcft}. This
+thesis does the opposite: it builds a separate index for each representation and
+compares them against one another, so
+that the contribution of each can be seen on its own (RQ1.3).
+Section~\ref{sec:bg-indexing} describes how a tuple sequence becomes a vector that
+can be indexed and searched.
+
+\section{Indexing and retrieval}\label{sec:bg-indexing}
+
+Retrieval methods differ in how a document is represented and how its similarity
+to a query is computed, and each representation needs a different kind of index to
+be searched at scale. Three families bear on this thesis: \emph{sparse retrieval}
+over the terms a document contains, \emph{dense retrieval} over learned vectors,
+and retrieval over the structure of the formulas a document holds. All three do
+the same thing --- score every document in the collection against a query and
+return a ranked list --- and this section describes how each represents a
+document, how each is searched, and what each can and cannot match. The third is
+the only one of the three that reads a formula as anything but a string.
+
+\emph{Sparse retrieval} scores documents by the query terms they contain, and
+BM25 is the standard weighting of this kind. BM25 weights a term by how often it
+occurs in the document, how rare it is across the collection, and how long the
+document is; two parameters shape the weighting, $k_1$ for how quickly repeated
+occurrences of a term stop adding score, and $b$ for how strongly a document is
+penalised for its length~\cite{robertson2009bm25}. Matching is lexical, so a
+document is scored only if it literally shares a term with the query. For
+mathematical text this cuts both ways: a formula matches only when its \LaTeX{}
+tokens appear verbatim, but when they do the match is exact and cheap.
+
+\emph{Dense retrieval} replaces terms with meaning. A neural encoder maps the
+query and each document to a single fixed-length vector, and similarity is the dot
+product between them. The architecture is a \emph{bi-encoder}: query and document
+are encoded independently, which is what makes the approach practical, since every
+document can be encoded once offline and only the query has to be encoded at
+search time~\cite{karpukhin2020dpr}. Encoders of this kind are
+pre-trained on general text and then fine-tuned on large collections of
+question--answer pairs, which is what adapts them to the genre of a community
+question answering collection. Their strength is that they match paraphrases a
+lexical match misses; their weakness is that a whole answer post, however long,
+must be compressed into one vector.
+
+Formula retrieval embeds the path tuples of
+Section~\ref{sec:bg-formula-representations}. The tuple sequence of a formula is
+treated as a sentence and each tuple as a word, an approach introduced by
+Tangent-CFT~\cite{mansouri2019tangentcft}, and a \emph{fastText} model is trained
+over the resulting corpus --- a word-embedding method that learns a vector for
+each token from the tokens surrounding it, and that composes each token's vector
+from its character n-grams as well as the token itself, rather than from the token
+alone~\cite{bojanowski2017fasttext}. The training objective is skip-gram: each
+tuple is trained to predict the tuples around it and to distinguish them from
+randomly sampled ones, so tuples occurring in similar surroundings end up with
+similar vectors. Because a token is assembled from its n-grams, a tuple never seen
+in training still receives a vector. That matters here because mathematical
+expressions are close to unique, and a query formula absent from the collection is
+the normal case. A formula is represented by the mean of its tuple vectors, and
+two formulas are compared by the cosine of theirs.
+
+Dense and formula retrieval need a different index from a sparse one. An inverted
+index scores only the documents sharing a term with the query, whereas a vector
+representation gives every document a non-zero similarity, making retrieval a
+nearest-neighbour search over the whole collection. Exhaustive search is exact but
+costs time proportional to the number of vectors, which is affordable for the
+answer posts and not for the roughly 28 million formula instances. \emph{Approximate
+nearest-neighbour} search buys that cost back: the vectors are grouped into cells
+around learned centroids so that only the cells nearest the query are scanned, and
+each vector is stored compressed so that the index fits in
+memory~\cite{johnson2021faiss}. Both steps trade a little recall for a large
+saving in time and space, and how much is traded is a parameter rather than a
+property of the method; Section~\ref{sec:met-formula-indexing} gives the settings
+used. Each of the three then returns a ranked list, but on scales that cannot be
+compared with one another, which is the problem Section~\ref{sec:bg-rank-fusion}
+addresses.
+
+\section{Rank fusion}\label{sec:bg-rank-fusion}
+
+Mapping those scores onto a common scale is the obvious repair, and it is not
+free. A BM25 score is unbounded and depends on collection statistics, a dot
+product depends on the norms of two embeddings, and a cosine is confined to
+$[-1,1]$. Adding or averaging such scores is meaningless until they are made
+commensurable, and every way of making them so is itself a modelling decision:
+min--max normalisation, for instance, depends on the highest and lowest score that
+happened to appear in that particular result list, so the same document can be
+worth a different amount depending on what else was retrieved alongside it.
+Rank-based fusion avoids the choice altogether by discarding the scores and
+keeping only the position each document occupies, which is comparable across
+rankings by construction.
+
+Reciprocal Rank Fusion (RRF) is the simplest and most widely used method of this
+kind. Given a set of rankings $R$, each document $d$ receives the score
+\begin{equation}
+\mathrm{RRF}(d) = \sum_{r \in R_d} \frac{1}{k + r(d)},
+\end{equation}
+where $R_d \subseteq R$ is the set of rankings in which $d$ appears, $r(d)$ is the
+rank of $d$ in ranking $r$, and $k$ is a constant, set to 60 in the original
+work~\cite{cormack2009rrf}. The reciprocal shape means a document gains most from
+appearing near the top of a list and little from appearing deep in one, while $k$
+damps the difference between the highest positions so that no single ranking can
+decide the outcome by placing one document first. A document
+retrieved by several rankings accumulates contributions and rises; a document
+found by only one of them still enters the fused list. A ranking whose values are on a
+wildly different scale cannot dominate the result, because each contribution is
+bounded by $1/(k+1)$. That is precisely what makes RRF usable across sparse,
+dense and formula rankings without calibrating any of them against one another.
+The same peculiarity of RRF cuts the other way too. A contribution depends only on
+position, so the document a ranking places first is worth $1/(k+1)$ whether that
+ranking is a good one or a poor one: the rule weighs rankings equally because it
+has no measure of their quality, and a ranking that retrieves badly therefore
+pushes its own top documents into the fused list rather than merely failing to
+improve it.
+
+Which rankings are worth combining, and with what value of $k$, the rule does not
+settle for itself; Section~\ref{sec:met-retrieval-configs} states the choices this
+thesis makes. What no fusion rule settles at all is whether the list it produces
+is better than the ones that went into it --- a question nothing inside a ranking
+can answer, and the one Section~\ref{sec:bg-retrieval-metrics} takes up.
+
+\section{Retrieval evaluation metrics}\label{sec:bg-retrieval-metrics}
+
+A retrieval measure compares a ranked list of documents against the relevance
+judgments for the topic that produced it. ARQMath judges on the four-level scale of
+Section~\ref{sec:bg-arqmath}, so each judged document carries a grade
+$g \in \{0,1,2,3\}$, and a measure turns a ranking and those grades into one number
+per topic, averaged over topics to score a system.
+
+Two kinds of measure are standard on a graded collection of this sort. One counts
+how many relevant documents reach the head of a ranking; the other also reads the
+order in which they arrive.
+
+\emph{Precision at $k$} is the simpler of the two. It binarises the grades by the
+H+M rule --- a document counts as relevant when $g \geq 2$ --- and reports the
+fraction of the top $k$ documents that are relevant:
+\begin{equation}
+\mathrm{P}@k = \frac{1}{k}\,\bigl|\{d \in \text{top-}k : g(d) \geq 2\}\bigr| .
+\end{equation}
+It ignores both the grades above the threshold and the order within the top $k$: a
+ranking with three relevant documents scores the same whether they occupy the
+first three positions or the last three.
+
+\emph{Normalised discounted cumulative gain} keeps both~\cite{jarvelin2002cumulated}.
+Each document contributes a gain equal to its grade, discounted by how far down the
+ranking it sits, and these are accumulated:
+\begin{equation}
+\mathrm{DCG}@k = \sum_{i=1}^{k} \frac{g(d_i)}{\log_2 (i+1)} ,
+\end{equation}
+where $d_i$ is the document at rank $i$. The discount written here is the one that
+applies from rank 1~\cite{burges2005learning}, and is what \texttt{trec\_eval}
+computes; the original formulation leaves the first ranks
+undiscounted~\cite{jarvelin2002cumulated}. The logarithmic discount means a High
+answer at rank 1 is worth more than the same answer at rank 10, which is the
+property precision lacks. DCG is unbounded and depends on how many relevant
+documents a topic happens to have, so it is normalised by the largest value any
+ranking of that topic's judged documents could achieve --- the \emph{ideal} DCG,
+obtained by sorting all judged documents for the topic by grade and taking the
+first $k$:
+\begin{equation}
+\mathrm{nDCG}@k = \frac{\mathrm{DCG}@k}{\mathrm{IDCG}@k} .
+\end{equation}
+A score of 1 means the top $k$ could not have been ordered better, and 0 that
+nothing relevant was retrieved. The ideal is a property of the judgments, not of the
+ranking being scored: a relevant document added to a topic's judgments raises that
+topic's ideal for every system at once. Two nDCG values are therefore comparable only
+when they are computed against the same judgments.
+
+\emph{Mean average precision} reads the ranking to its end rather than stopping at
+a cutoff. For a single topic, average precision adds up the precision at every rank
+holding a relevant document and divides by the number of relevant documents the
+topic has:
+\begin{equation}
+\mathrm{AP} = \frac{1}{R} \sum_{i \,:\, g(d_i) \geq 2} \mathrm{P}@i ,
+\end{equation}
+where $R$ is that number. MAP is the mean of AP over topics. It binarises at H+M as
+precision does, and rewards relevant documents that arrive early as nDCG does, but
+it is the only one of the three whose value depends on the whole ranking; it is
+also one of the measures ARQMath publishes for its participant
+runs~\cite{mansouri2022arqmath3}.
+
+All three measures assume that every document they read carries a grade.
+
+\subsection*{Prime variants}
+
+A test collection judges a pool assembled from the systems that took part in the
+original evaluation. A system built afterwards retrieves documents that were never
+in that pool, and those documents have no judgment at all. Treating them as
+non-relevant penalises exactly the systems that retrieve differently from the pool,
+which is the case relevant to this thesis (Section~\ref{sec:met-hole-problem}).
+
+The \emph{prime} variants answer this by condensing the list: every unjudged
+document is removed from the ranking, and the measure is computed over what
+remains, so that the cutoff $k$ is reached using judged documents
+only~\cite{sakai2008prime}. The ideal is untouched: it is still computed from every
+judged document for the topic, so condensing changes what a ranking is scored on,
+not what it is scored against. Written P$'$@$k$, nDCG$'$@$k$ and MAP$'$, they are the
+official measures of the ARQMath labs~\cite{mansouri2022arqmath3} and are used
+throughout this thesis. Sakai found condensed-list measures more robust to
+incomplete judgments than the alternatives designed for the same
+problem~\cite{sakai2007alternatives}, bpref among them~\cite{buckley2004incomplete}.
+
+Condensing is not free. Removing unjudged documents implicitly assumes they would
+have been graded like the judged ones around them, and where that assumption fails
+the result is optimistic: condensed-list measures tend to overestimate systems that
+did not contribute to the pool~\cite{froebe2023bootstrapped}. The size of the
+assumption is quantified by the \emph{hole rate}, the fraction of a ranking's top
+$k$ that carries no judgment,
+\begin{equation}
+\mathrm{hole}@k = \frac{1}{k}\,\bigl|\{d \in \text{top-}k : d \text{ unjudged}\}\bigr| ,
+\end{equation}
+which says how much of the ranking a prime score was in fact computed over.
+Section~\ref{sec:met-judge-validation} describes the second response to the same
+problem, which is to have the unjudged documents labelled rather than discarded.
+Since nDCG values are comparable only under shared judgments, that response must also
+settle which judgments every system is then scored against, and
+Section~\ref{sec:met-evaluation-protocol} settles it.
+
+\section{Relevance assessment and agreement}\label{sec:bg-agreement}
+
+% Written 2026-09-19 (manifest §7a, §3.6 rows). Background only: no model, prompt, threshold or
+% number of this thesis -- those are §4.4.
+
+Section~\ref{sec:bg-retrieval-metrics} ended on a problem. A system built after a
+collection was assessed retrieves answers no assessor saw, and discarding them
+overestimates it. The other response is to have those answers labelled by someone
+other than the original assessors, and increasingly that someone is a language model.
+
+Whether such labels can stand in for the assessors' is a question that can be
+answered empirically, and it comes in two forms that are easy to confuse. The first is
+whether the two labellers give the same grade to the same answer. The second is
+whether scoring systems with one labeller's grades orders them the way the other's
+grades do. This section first introduces language models as relevance assessors, then gives a statistic for each of the two questions, and ends with how small a difference between two systems an evaluation can detect. The two questions have to be kept apart: a labeller can fail the first and still pass the second.
+
+Relevance is usually judged by people, and human assessment is slow and expensive. That is why pools stop at a fixed depth
+(Section~\ref{sec:bg-arqmath}). A large language model can be prompted to do the same
+task: given a query and a document, assign one of the collection's relevance grades. A
+model used this way is an \emph{LLM relevance judge}, or simply a \emph{judge}.
+
+Thomas et al.\ showed that a carefully prompted model can match human relevance
+preferences in web search~\cite{thomas2024llm}. UMBRELA, an open-source reproduction of
+their prompt, was used to assess the TREC 2024 RAG track alongside NIST's
+assessors~\cite{upadhyay2025umbrela}. Its prompt describes the task, sets out each
+relevance level in turn, and forces a single grade as output. The comparison with
+NIST's assessors established three things: the judge reproduced the ordering of
+systems closely; it agreed with the assessors much less well on individual documents;
+and it was more lenient, rating documents relevant that the assessors did not. Its
+authors concluded that such a judge can replace manual judgments to measure
+effectiveness ``in a coarse-grained manner'', but should not be used to separate
+systems whose effectiveness is close. Each of these findings needs a statistic, and
+the rest of this section supplies them.
+
+\subsection*{Agreement on individual answers}
+
+When two labellers grade the same items, their agreement is summarised in a
+\emph{confusion matrix}. It has one row per grade the first labeller used and one
+column per grade the second used, and each cell counts the items that received that
+pair of grades. The diagonal holds the items on which the two agree. The share of all
+items that sit on the diagonal is the \emph{observed agreement}, $p_o$.
+
+Observed agreement flatters any labeller when one grade dominates. In a pooled
+collection most judged documents are not relevant. Two labellers who never read a
+document but answered ``not relevant'' every time would agree on most of them.
+
+\emph{Chance agreement}, $p_e$, measures that floor. Call the two labellers $a$ and $b$, and write $P_a(k)$ and $P_b(k)$ for the share of items each of them assigns grade $k$. If the two assigned grades independently, at those rates, they would agree on grade $k$ with probability $P_a(k)\,P_b(k)$, and on some grade with probability
+\begin{equation}
+p_e = \sum_k P_a(k)\,P_b(k) .
+\end{equation}
+\emph{Cohen's $\kappa$} removes this floor~\cite{cohen1960kappa}:
+\begin{equation}
+\kappa = \frac{p_o - p_e}{1 - p_e} .
+\end{equation}
+The numerator is the agreement achieved beyond chance, and the denominator is the
+agreement that was available beyond chance. $\kappa$ is 0 for a labeller no better
+than chance, 1 for perfect agreement, and negative when the two disagree more than
+chance would. On a graded scale, $\kappa$ can be computed over the grades as given,
+which asks whether the two chose the same grade. It can also be computed after
+binarising, for instance by the H+M rule of Section~\ref{sec:bg-arqmath}, which asks
+only whether they put the item on the same side of the relevance threshold.
+
+$\kappa$ is not a property of the labeller alone. Because $p_e$ is built from how
+often each grade is used, the same observed agreement yields a smaller $\kappa$ when
+one grade dominates. In that case chance alone already accounts for most of the agreement, so $p_e$ is close to $p_o$, and $\kappa$ comes out low even when the two labellers agree on most items. This is the
+\emph{prevalence effect}~\cite{simwright2005kappa}, one of the two paradoxes of high
+agreement but low $\kappa$~\cite{feinstein1990kappa}. Two consequences follow.
+Comparing $\kappa$ values from collections with different relevance rates is
+misleading. And $\kappa$ can be interpreted only beside the $p_o$ and $p_e$ it was
+computed from.
+
+\subsection*{Agreement on the ordering of systems}
+
+The second form of the question sets the labels aside and asks about their use. Each
+system in a set is scored twice with the same measure, once under each labeller's
+grades, and the two resulting orderings of the systems are compared.
+
+\emph{Kendall's $\tau$} compares them pair by pair~\cite{kendall1938tau}. For every
+pair of systems, the two orderings either agree on which system is better, making the
+pair \emph{concordant}, or disagree, making it \emph{discordant}. With $C$ concordant
+and $D$ discordant pairs,
+\begin{equation}
+\tau = \frac{C - D}{C + D} .
+\end{equation}
+No two systems tie on the measure used here, so $C + D$ is simply the number of pairs,
+and this coincides with Kendall's original coefficient. $\tau$ is 1 when the orderings
+are identical, 0 when they are unrelated, and $-1$ when one reverses the other.
+
+Agreement on labels and agreement on orderings are different quantities, and either
+can be high while the other is low. Consider a labeller whose disagreements all run in
+one direction, for example one that grades every non-relevant document one step too
+high. It raises every system's score together, so it can leave the ordering nearly
+intact while its $\kappa$ is low.
+
+\subsection*{Resolving power}
+
+A high $\tau$ says that most pairs of systems keep their order. It does not say which
+pairs do not. Those are, predictably, the pairs whose scores are close. The ability of an evaluation to tell such close systems apart is its \emph{resolving power}, and Upadhyay et al.\ found UMBRELA's to be limited~\cite{upadhyay2025umbrela}.
+
+Buckley and Voorhees give a way to measure it~\cite{buckley2000stability}. They
+compared the orderings that different evaluations of the same systems produce, in
+their case the same measure over different query formulations and over topic sets of
+varying size. For each pair of systems they counted how often the two evaluations
+disagreed about which was the better, and took the minority verdict as the error; the
+\emph{error rate} is the total of those errors over all the decisions made, ties
+included. Close pairs are set aside by a \emph{fuzziness value}: the percentage difference between two scores below which the scores are treated as equivalent. The closest pairs are the ones
+most likely to be misordered, so raising the fuzziness value lowers the error rate, at
+the price of leaving more pairs undecided. Together, a fuzziness value and the error
+rate it yields state how large a difference must be before the ordering it implies can
+be trusted.
+
+Two questions therefore remain for the judge this thesis uses: whether a judge that
+disagrees with the assessors on individual labels can still be trusted to rank
+systems, and how small a difference it can resolve. Section~\ref{sec:met-judge-validation}
+settles both.
+
+\section{Generation evaluation metrics}\label{sec:bg-generation-metrics}
+
+Retrieval measures say whether the right documents were found; they say nothing
+about what is then done with them. In \emph{retrieval-augmented generation} a
+language model --- the \emph{generator} --- receives the retrieved documents as
+its \emph{context} alongside the question and writes the answer that is scored, so
+the answer needs measures of its own. Two questions arise once it exists, and
+neither answers the other: whether the answer is grounded in the context it was
+given, and whether the answer is correct. An answer can be grounded in a context
+that is itself wrong, and it can be correct from knowledge no context supplied.
+This section defines a measure for both.
+
+Faithfulness is defined by RAGAS, a framework that scores the stages of a
+retrieval-augmented pipeline with a language model in place of a human
+annotator~\cite{es2024ragas}; factual correctness was added later to its
+implementation~\cite{ragaslib}, in the version named in
+Section~\ref{sec:gen-method}. The two are built alike, so the construction is
+given once and each measure follows from it. A text is first decomposed into
+\emph{claims} --- standalone assertions, each of which can be checked on its own.
+Every claim is then judged against some body of text, scoring 1 where it can be
+inferred from that text and 0 where it cannot. The language model performs both
+steps. What separates one measure from another is which text is decomposed and
+what its claims are checked against.
+
+\emph{Faithfulness} answers the first question: the generated answer is
+decomposed, and its claims are checked against the retrieved context, taken as one
+body of text. \emph{Factual correctness} answers the second, and needs something
+to be correct about --- a \emph{reference}, a text holding the answer the question
+should have received. The answer is decomposed again, and its claims are checked
+against the reference instead. Its precision reading,
+\emph{factual-correctness precision} (FC-P), is the share of those claims the
+reference supports. The two measures are therefore one formula read twice,
+\begin{equation}
+\begin{aligned}
+\mathrm{Faithfulness} &=
+\frac{\bigl|\{c \in C(\text{answer}) : c \text{ inferable from the context}\}\bigr|}
+     {\bigl|C(\text{answer})\bigr|} ,\\[6pt]
+\text{FC-P} &=
+\frac{\bigl|\{c \in C(\text{answer}) : c \text{ inferable from the reference}\}\bigr|}
+     {\bigl|C(\text{answer})\bigr|} ,
+\end{aligned}
+\end{equation}
+where $C(x)$ denotes the set of claims the text $x$ decomposes into. Both
+denominators count the answer's own claims; only the text the claims are checked
+against changes.
+
+What each measure leaves out follows from that. Faithfulness requires no correct
+answer to compare against. That is why it can be computed wherever a context
+exists, and why it is not a quality score. It measures grounding rather than
+truth: an answer scores 1 as long as the context supports every claim it makes,
+even when the context is wrong. Factual-correctness precision is silent in the
+other direction. It never sees the context, so an answer the generator wrote from
+what it already knew scores as well as one the context supplied, provided the
+reference supports it.
+
+The denominator is where faithfulness is most easily misread, and the misreading
+is worth naming. The fraction is taken over the claims of the \emph{answer}, never
+over those of the context, so nothing about how much of the context was used
+enters the score: an answer that leans on one line of a long context and an answer
+that draws on all of it can both score 1. Faithfulness is a proportion of what was
+said, not of what was available.
+
+One property of the shared construction bears on every score it produces. How
+finely a text is cut into claims is not fixed but governed by two parameters:
+\emph{atomicity}, how far a sentence is split into separate assertions, and
+\emph{coverage}, how much of a sentence's detail survives the split. Numerator and
+denominator are both counts of claims, so the granularity of the decomposition
+moves the whole fraction, and two answers of identical content can score
+differently if they are cut differently. That is a property of the instrument, not
+of the answers.
+
+Faithfulness needs only a context. Factual correctness needs a reference, and for
+a mathematics question the collection does not hand one over ready-made: the same
+question usually admits several valid routes to the same result, so taking any one
+correct answer as the reference would mark a correct response wrong for having
+taken a different route. What a reference is built from instead is settled in
+Section~\ref{sec:gen-method}.

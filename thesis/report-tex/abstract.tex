@@ -1,0 +1,142 @@
+% Abstract and Zusammenfassung. Written 2026-09-28 on Abram's instruction, replacing the
+%   template's lorem ipsum, and trimmed twice the same day so that each block sits on one page.
+%   Snapshots, oldest first: abstract.preWritten.bak.tex (the template's lorem ipsum),
+%   abstract.preTrim.bak.tex (the first write, 453 w English and 467 w German, two pages each),
+%   abstract.preDeFix.bak.tex (English at its final 387 w, German still at 381 w and still
+%   overflowing).
+%
+% ⚠⚠ THE GERMAN BLOCK IS WRAPPED IN otherlanguage{ngerman}, AND THIS IS NOT COSMETIC.
+%   softlang.cls loads babel as \RequirePackage[ngerman,english]{babel} (line 85) when the class
+%   option `german` is NOT set, which is this thesis's case, so english is the main language and
+%   ngerman is merely available. Without the switch the Zusammenfassung is typeset with ENGLISH
+%   hyphenation patterns, and a German compound -- Formelrepräsentation, Relevanzbewerter,
+%   Formelübereinstimmung, ARQMath-3-Kollektion -- then cannot be broken at all. Every one of them
+%   is forced whole onto a line, the justification goes ragged, and the block runs long for
+%   reasons that have nothing to do with how much it says. That was the overflow Abram reported at
+%   09:45, after the word count had already been brought under the English one.
+%   The class also loads hyphsubst with ngerman-x-latest (line 90) precisely for compounds; that
+%   too only takes effect once the language is ngerman.
+%   ⚠ ngerman makes " an active character (see the build log). The block contains no " and must
+%   not acquire one -- use \enquote or German quotes if quoting ever becomes necessary here.
+%
+% TWO PAGES, his instruction: \clearpage between the two blocks. The document is `oneside`, so
+%   \clearpage inserts no blank page and ausarbeitung.tex's own \cleardoublepage after the \input
+%   still carries the reader into the table of contents. The German block comes first, as the
+%   template had it; swapping the two is one cut and paste if the English should lead.
+% The template's instruction line -- "Gemäß der Prüfungsordnung ist ein Abstract in deutscher und
+%   englischer Sprache verpflichtend." -- is removed: it addresses the author, not the reader.
+%
+% ⚠ THE PAGE BUDGET IS MEASURED, NOT GUESSED. The fullest solid-prose pages of the build hold
+%   443, 433 and 422 words (pages 26, 29, 31); a \subsection* heading costs roughly three and a
+%   half lines, about 40 words, and \parskip is zero in `book`. That puts the ceiling near 400
+%   words for English. German sets fewer words per line -- 5.9 characters per word against 5.0 --
+%   so the German block is held well under that ceiling rather than to the same number.
+%   THE HISTORY, so that no one restores a longer German block believing the ceiling is 400:
+%   453 w (two pages) -> 381 w (still two) -> 356 w with the ngerman fix below (still one sentence
+%   over, reported 09:49) -> the present 330. English has been at its final 387 since the first
+%   trim and has always fitted. The three German cuts came out of the opening paragraph each time,
+%   which is the only part of either block carrying no result.
+%
+% NO NUMBER FROM THE REGISTRY. The only figures are the two containment counts, 70 and 30 of the
+%   78 topics (manifest §14 R7, OPT, fanout, H+M), which need no scale to be read, and the 78
+%   topics themselves. Every nDCG' value in this thesis is computed under the judge's labels and
+%   means nothing beside a number from anywhere else (§4.4), so none appears here; an abstract is
+%   the one place a bare 0.551 would be read as a benchmark figure. Nothing here can therefore go
+%   stale against the registry.
+%
+% BANS HONOURED: no hypothesis ID, no RQ number, no "significant", no ratio or magnitude claim, no
+%   first person, no section reference, no citation, "formulas" not "formulae". No coined term --
+%   *blocked*, *flat*, *formula block* and *floor* are described rather than named, since their
+%   definition sites (§5.2.2, §6.2) sit thirty to fifty pages further on. The merge sentence claims
+%   only that the arrangement decides the outcome, never that it matters more than the
+%   representation choice (§1c-i decision 1).
+%
+% SCOPE. The abstract names mathematical questions and the collection, and claims nothing about
+%   scientific papers -- §1.1's concession, and it sidesteps the undecided title (§15 O-6).
+%
+% ⚠ THREE THINGS NO FURTHER TRIM MAY UNDO.
+%   (i) "Adding all three" CARRIES ITS QUALIFIER, *when each votes separately* / *wenn jeder für
+%       sich abstimmt*. Without it the claim is false -- it holds only of the arrangement where
+%       each formula ranking votes on its own (§5.4.4), and the blocked system adds all three as
+%       well (§5.4.5), so the unqualified form contradicts the merge sentence two lines below it.
+%   (ii) The formula-search sentence stays: it is the answer to "was the component simply
+%       broken?" (§5.3), and it is the one sentence an examiner will look for.
+%   (iii) Both containment counts stay. 70 without 30 is the opposite finding.
+%   Where the next cut goes, if a block still spills: the opening paragraph, the only part of
+%   either block carrying no result.
+%
+% ⚠ DASHES: --- in the English block, -- in the German, which is the German convention. Not an
+%   inconsistency.
+% ⚠ THE GERMAN IS A TRANSLATION AND ITS TERMS ARE CHOICES, not settled vocabulary: sparse and
+%   dense read as "dünn besetzt" and "dicht"; the ARQMath assessors as "Annotatoren", to keep
+%   "Gutachter" for the examiners of the title page; "answer retrieval" as "Antwortsuche", beside
+%   "Formelsuche". Sweep all four together if any one of them changes.
+
+\begin{otherlanguage}{ngerman}
+\subsection*{Zusammenfassung}
+
+Eine mathematische Frage wird in Worten und Formeln zugleich gestellt, und ein Retrievalsystem
+muss beides lesen. In einem gewöhnlichen Textindex steht eine Formel nur als die Zeichenfolge,
+mit der sie geschrieben wurde; die Anordnung, in der ihre Bedeutung liegt, fehlt dort. Die
+Struktur zu indexieren hilft bei der Formelsuche; ob es auch bei der Antwortsuche hilft, ist eine
+andere Frage, denn relevant ist eine Antwort, wenn sie die Frage löst, nicht, wenn ihre Formeln
+übereinstimmen.
+
+Diese Arbeit baut drei strukturbewusste Formelindizes, einen je Formelrepräsentation, neben einem
+dünn besetzten und einem dichten Textindex und führt ihre Ranglisten in zehn Anordnungen
+zusammen. Die fünfzehn Konfigurationen werden auf der Antwortsuche über die 78 Topics der
+ARQMath-3-Kollektion bewertet, unter einem zuvor an den menschlichen Urteilen validierten
+Relevanzbewerter, und jede liefert anschließend einen Kontext an einen Generator unter einem
+festen Prompt.
+
+Formelevidenz verbessert die Antwortsuche nicht. Kommt einer der drei Formelindizes zum stärksten
+reinen Textretrieval hinzu, bleibt das System dahinter zurück, ebenso bei allen dreien mit je
+eigener Stimme. Wie sie zusammengeführt werden, entscheidet über den Abstand: Bündelt man die
+drei Formelranglisten zu einer Stimme, zieht das System mit dem reinen Textretrieval gleich, und
+nichts hier übertrifft es. Diese Anordnung verdient ihren Platz, indem sie die Formelevidenz
+daran hindert zu schaden, nicht indem sie liefert, was den Textranglisten fehlt. Am Index liegt
+es nicht; bei der Formelsuche schneidet er vergleichbar mit einem veröffentlichten System ab. Die
+Formeln eines Topics stecken auf 70 der 78 Topics stärker in den relevanten als in den nicht
+relevanten Antworten, unter den am besten passenden aber, wo sich eine Rangliste entscheidet, nur
+noch auf 30. Formelübereinstimmung findet die richtige Nachbarschaft und kann innerhalb dieser
+nicht ordnen.
+
+Ein abgerufener Kontext erreicht die erzeugte Antwort dennoch, die faktisch korrekter ausfällt
+als eine ohne Kontext geschriebene. Wie viel einer Antwort aus ihrem Kontext stammt und wie viel
+davon richtig ist, steigt mit der Qualität des Retrievals dahinter, wenn auch nicht gleichmäßig
+und nicht bei jeder Größe des Generators. Das Retrieval erreicht die Antwort; es schreibt aber
+nur wenig davon.
+\end{otherlanguage}
+
+\clearpage
+
+\subsection*{Abstract}
+
+A mathematical question is asked in words and formulas together, and a retriever has to read
+both. A formula enters an ordinary text index as the characters it was typed with. Rename the
+variables and the index sees an unrelated string. What the index never holds is the arrangement
+itself, and that is where a formula's meaning lies. Indexing that structure is what formula
+search does; whether it also helps when answers are what is retrieved is a separate question,
+because an answer is relevant when it resolves the question and not when its formulas match.
+
+This thesis builds three structure-aware formula indexes, one per formula representation, beside
+a sparse and a dense text index, and merges the rankings they return in ten arrangements. Fifteen
+configurations in all are scored on answer retrieval over the 78 topics of the ARQMath-3
+collection, under a relevance judge validated beforehand against the human assessors, and each of
+them then supplies a context to one generator under one fixed prompt.
+
+Formula evidence does not improve answer retrieval. Adding any one of the three indexes to the
+strongest text-only retrieval leaves the system behind that retrieval alone, and so does adding
+all three when each of them votes separately. How the rankings are merged decides how far behind:
+collapsing the three formula rankings into a single vote before fusing draws level with text-only
+retrieval, and nothing built here passes it. That arrangement earns its place by keeping formula
+evidence from doing harm rather than by supplying what the text rankings lack. The failure is not
+the index, which performs comparably with a published system on formula search. A topic's
+formulas are contained in the answers judged relevant more than in those judged not relevant on
+70 of the 78 topics, but among the best-matching answers, where a ranking is decided, on only 30.
+Formula matching finds the right neighbourhood and cannot order inside it.
+
+A retrieved context nonetheless reaches the generated answer, which is more factually correct
+than one written from no context at all. Both how much of an answer comes from its context and
+how much of it is correct rise with the quality of the retrieval behind it, though not equally
+and not at every size of generator. Retrieval reaches the answer; it does not write much of it.

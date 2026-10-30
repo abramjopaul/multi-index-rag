@@ -1,0 +1,43 @@
+% Chapter 6 section 6.1: overview.
+% Written 2026-09-26 (manifest §9b row 6.1), drafted in the chat and approved before this write.
+% Shape follows §5.1 as rewritten 2026-09-25: no verbatim RQ block and no mapping table (§15 O-20 c),
+%   no float, no ranking clause (review E4), ~250 words.
+% Carries: the road map; the recap of which configuration "the multi-index retriever" names -- the
+%   blocked system, as §5.6 selects it, with no numbers repeated; FC-P introduced for the chapter;
+%   faithfulness stated once as attribution rather than quality (manifest §1c); and the reading rule --
+%   generation differences read as reported, §5.1's 0.02 belonging to retrieval scores alone.
+% Not here: the RQ text, k, the generator sizes and the prompt (all §6.2); any oracle condition
+%   (not reported -- manifest §9b, 2026-09-26).
+% RQ3 is named as a sanity check on RQ2, her own term for it (susanne-review-response.md F8).
+% The verdicts section is described rather than \ref'd: §6.4 has no label until it is written.
+
+\section{Overview}\label{sec:gen-overview}
+
+This chapter answers the second research question, on generation, and the third, a sanity
+check on the second: whether its answers survive a change of generator.
+Section~\ref{sec:gen-method} states how the answers were produced and how they were
+scored. Section~\ref{sec:gen-results} reports three experiments: how answers generated
+from the multi-index retriever's context compare with answers generated from no context and
+from the context of text-only retrieval; whether answer quality tracks retrieval quality
+across the fifteen retrieval configurations of
+Section~\ref{sec:met-retrieval-configs}; and whether both results hold as the generator
+grows. The chapter closes by ruling on each hypothesis.
+
+The retriever this chapter gives the generator is the one Section~\ref{sec:ret-verdicts}
+selected, the blocked multi-index system, and the retrieval it is set against is the
+strongest text-only system, dense retrieval on its own. Both were chosen there by reading the
+retrieval results, and this chapter takes them as given.
+
+Two measures are reported, and they answer different questions. Factual-correctness precision
+(FC-P) is the quality measure: the share of an answer's claims that the reference supports.
+Faithfulness measures attribution rather than quality --- the share of an answer's claims that
+the retrieved context supplied --- so a low value on a \emph{correct} answer means the
+generator already knew the answer, not that the answer is poor. Faithfulness needs a context
+to be computed against, and generation without retrieval therefore has no value for it.
+
+Retrieval quality enters as the primary measure of Chapter~\ref{ch:retrieval},
+nDCG$'$@10 under the labels of the relevance judge of
+Section~\ref{sec:met-judge-validation}. Differences between generation scores are read as the
+values are reported, with no statistical test and no equivalent limit: the 0.02 of
+Section~\ref{sec:ret-overview} is a property of the relevance judge and governs retrieval
+scores alone.

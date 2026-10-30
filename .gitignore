@@ -20,11 +20,36 @@ results/
 experiments/runs/
 
 # ---------------------------------------------------------------------------
-# Thesis sources. The manifest is tracked as the project's design record;
-# the LaTeX build, literature PDFs and dated snapshots are not.
+# Thesis. The LaTeX sources and the compiled report are published. Not
+# published: the literature PDFs (copyright), the author's scanned
+# signature, dated snapshots, the defence deck, the expose, and LaTeX
+# build output.
 # ---------------------------------------------------------------------------
 thesis/*
-!thesis/manifest.md
+!thesis/report-tex/
+!thesis/thesis-report.pdf
+
+# Scanned signature, rendered onto the declaration page by softlang.cls.
+# Not published. A blank PNG at this path lets the build run.
+thesis/report-tex/images/abram_jopaul_signature.png
+
+# LaTeX build output and section previews
+thesis/report-tex/*.aux
+thesis/report-tex/*.bbl
+thesis/report-tex/*.bcf
+thesis/report-tex/*.blg
+thesis/report-tex/*.fdb_latexmk
+thesis/report-tex/*.fls
+thesis/report-tex/*.lof
+thesis/report-tex/*.log
+thesis/report-tex/*.lot
+thesis/report-tex/*.out
+thesis/report-tex/*.run.xml
+thesis/report-tex/*.toc
+thesis/report-tex/*.synctex.gz
+thesis/report-tex/ausarbeitung.pdf
+thesis/report-tex/_sec*_preview.pdf
+thesis/report-tex/doi-lookup-list.txt
 
 # ---------------------------------------------------------------------------
 # Dated snapshots of working documents — local history, not repo history
@@ -43,6 +68,8 @@ _pre-publication-backup/
 # Assistant working notes
 # ---------------------------------------------------------------------------
 Claude outputs/
+CLAUDE.md
+CLAUDE.*.md
 
 # ---------------------------------------------------------------------------
 # Environments and editors

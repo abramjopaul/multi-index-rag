@@ -1,0 +1,544 @@
+\chapter{Related Work}\label{ch:related-work}
+
+% =====================================================================
+% SKELETON ONLY -- structure agreed 2026-09-23 (manifest §6). No prose yet;
+% each section is elaborated one at a time.
+%
+% BUDGET: 4-5 pp ~= 2,000-2,250 words, plus a ~100-word chapter opening.
+% Five sections. Retrieval fusion has no section of its own: after §3.4 the
+% only related-work content left is that ARQMath participants fused runs,
+% which is one unelaborated sentence in §2.1.
+%
+% THE BOUNDARY AGAINST CHAPTER 3
+%   Background says what a thing IS. Related Work says what other people
+%   BUILT with it, and where this thesis stands.
+%   A background sentence is true if this thesis had never been written;
+%   a related-work sentence names a system, a result or a position.
+%   => This chapter names systems and their published outcomes. It never
+%      explains a mechanism. RRF's formula is §3.4; that the best automatic
+%      ARQMath-3 Task 1 run was an RRF ensemble is §2.1.
+%
+% THE ORDERING CONSTRAINT -- this chapter comes BEFORE Chapter 3
+%   No term Chapter 3 defines may appear here: not SLT, OPT, path tuple,
+%   prime, hole, nDCG', pool, judge. Write coarse instead --
+%   "a tree-based formula representation", "systems built after the
+%   assessment was finished", "an automatic relevance labeller".
+%
+% HOUSE STYLE (CLAUDE.md §3): open each section by saying why it exists;
+% motivate before defining; carry numbers with their provenance; close by
+% naming the problem the next section inherits. Forward references name a
+% QUESTION a later section settles, never a location or an outcome.
+%
+% Per-paper detail, with the exact figures and our position on each, is in
+% manifest §16. Twelve of the papers below still need entries in sources.bib.
+% =====================================================================
+
+% TODO chapter opening -- PENDING A DECISION (2026-09-23). Section 2.1 now opens the chapter
+% by explaining the field, so a separate opening would say the same thing twice. Abram to
+% confirm dropping it. Original plan, ~100 w: why a related-work chapter precedes the
+% machinery: this thesis assembles known components in an untried
+% arrangement and evaluates it on a collection it did not participate in,
+% so what is new is the arrangement and the evaluation, not the parts.
+% Name the four sections; say the fourth matters most.
+
+
+\section{Mathematical information retrieval}\label{sec:rw-mir}
+
+% Rewritten 2026-09-24 (Abram) as the FIELD section, replacing the 2026-09-23 version.
+% What it covers: what the field is, the three retrieval tasks it defines, the campaigns
+% that defined them, the difficulties common to all of them, and the task split that
+% Section 2.2 inherits. It does NOT say what the ARQMath collection is -- that is
+% Section 3.1, and the earlier draft duplicated it.
+%
+% THE WORKING TEST used throughout: every sentence carries an agent or a date -- a field,
+% a campaign, a group, a year. A sentence that would be true with nobody having done
+% anything belongs to Chapter 3 and was cut.
+%
+% Cut in this rewrite, deliberately:
+%  - the three-stage methods history (conventional -> tree-based -> neural). It was a
+%    trailer for Section 2.2 and named Tangent-S and Tangent-CFT a page before that
+%    section introduces them.
+%  - the ARQMath collection description (Math Stack Exchange corpus, the two tasks,
+%    topics posed after the snapshot). Section 3.1 carries all of it.
+%  - "The task decides which of the two matters more" -- the chapter's one ranking
+%    sentence, banned by her instruction of 2026-09-23 (review E4).
+%  - "held in Tokyo in 2013"; the NTCIR-12 subtask breakdown (Abram, 2026-09-24).
+%  - the structural/semantic split stated in the opening AND again at the close. It now
+%    appears once, in the final paragraph, where it carries the argument.
+%
+% Added in this rewrite:
+%  - a paragraph naming the tasks. The old version never enumerated them; formula search
+%    and answer retrieval were only ever defined implicitly inside the closing argument.
+%  - a challenges paragraph. Did not exist.
+%  - the fusion sentence manifest §6 requires and the old draft was missing: participants
+%    merged rankings, and the best automatic answer-retrieval run was such an ensemble.
+%
+% SOURCING (changed 2026-09-24). The NTCIR history and the challenges rested entirely on
+% the Dadure survey, a secondary source carrying three campaign generations. They now
+% rest on primary sources by the campaigns' own organisers: aizawa2020ntcirmath for the
+% NTCIR editions and the open problems, zanibbi2016ntcir12 for the document-retrieval
+% task, zanibbi2025mir for the task framework. Dadure is demoted to the single framing
+% citation manifest §16 always described it as.
+% ⚠ ALL THREE NEW ENTRIES CARRY TODO FIELDS IN sources.bib AND HAVE NO PDF IN
+%   thesis/literature/. Their claims here are pitched at what the abstracts support;
+%   verify against the PDFs before submission.
+%
+% Numbers: Tangent-S 0.540 (formula search) / 0.159 (answer retrieval) and 0.272 (text
+% baseline) are the organisers' published figures, manifest §16 and R6. The measure is
+% never named -- nDCG' is Section 3.5. The sentence after them states that the two tasks
+% are scored on different topic sets, so the pair carries a direction and not a size;
+% without it the pair reads as a magnitude claim, which §1c-i rules out.
+%
+% The closing two-explanation sentence is the section's load-bearing move: the second
+% explanation is the one RQ1 tests. Do not compress it back into "whether that belongs to
+% the representations or to the task".
+
+This thesis puts known components together in a new arrangement, so what it adds can
+only be seen against the problems the field already poses. This section describes those
+problems, the campaigns that defined them, and the difficulties they share.
+
+Mathematical information retrieval is the problem of searching documents that contain
+mathematical notation. It grew out of digital mathematical libraries, where ordinary
+text retrieval treated a formula as a string of characters and could not reach the
+structure that carries its meaning~\cite{dadure2024mirreview}. A query may be text, a
+formula, or both, which makes it a different problem, not a harder one.
+
+Three tasks recur. Formula search takes one formula as the query and returns formulas
+like it. Answer retrieval takes a mathematical question, stated in text and formulas,
+and returns passages that answer it. Document retrieval, the earliest campaigns' task,
+takes keywords and formulas together and returns paragraphs of scientific
+articles~\cite{zanibbi2016ntcir12}. Recent benchmarks add premise selection and
+statement retrieval over formal mathematics, and find every model weaker where
+reasoning is needed~\cite{ju2025mirb}. A recent survey groups them by one distinction:
+whether a system finds mathematical content or answers a question with
+it~\cite{zanibbi2025mir}.
+
+Shared campaigns defined them. The NTCIR Math tasks came first, from 2013: a pilot over
+a hundred thousand arXiv papers, then two further editions that added English
+Wikipedia~\cite{aizawa2020ntcirmath}. The ARQMath labs, at CLEF from 2020 to 2022, moved
+the corpus to Mathematics Stack Exchange and set answer retrieval beside formula
+search~\cite{zanibbi2020arqmath,mansouri2021arqmath2,mansouri2022arqmath3}. Participants
+there routinely merged several rankings into one, and the strongest automatic
+answer-retrieval run of the final edition was such an
+ensemble~\cite{mansouri2022arqmath3}.
+
+Three difficulties run through all of it. Notation is ambiguous: a small set of symbols
+stands for an immense number of concepts, so one expression can mean different things in
+different documents. The same idea can be written in several ways, so two formulas that
+mean the same thing may look nothing alike. And relevance is costly to establish: the
+NTCIR organisers drew their assessors from third-year and graduate students of pure
+mathematics, and divided documents into paragraphs to hold down the cost of judging
+them. Their account of the campaign opens by naming the absence of large-scale
+datasets, carefully designed tasks and established evaluation methods as the obstacle
+it set out to remove~\cite{aizawa2020ntcirmath}.
+
+Those difficulties fall unevenly across the tasks. A formula query asks for formulas
+like the one given, so structural similarity is most of the problem; a question carries
+text and several formulas, and a useful answer need not resemble any of them. The
+organisers' baselines show it. Tangent-S, run in both tasks, reached 0.540 at formula
+search and 0.159 at answer retrieval, against 0.272 for a plain text
+baseline~\cite{mansouri2022arqmath3}. The two tasks are scored on different topics, so
+the pair shows the same system is much weaker at answer retrieval. The representations
+may not carry the similarity answer retrieval rewards; or they may, and no one has
+combined them with text retrieval well enough to reach an answer. No team submitted an
+answer-retrieval system built on mathematics alone, so the leaderboards cannot tell them
+apart. Section~\ref{sec:rw-formula-systems} turns to the representations.
+
+
+\section{Formula representation and retrieval systems}\label{sec:rw-formula-systems}
+
+% Rewritten 2026-09-24 (Abram), replacing the 2026-09-23 version. Positional only: what
+% each system is, what it was measured on, and what it scored. Mechanism belongs to
+% Section 3.2.
+%
+% Cut in this rewrite, deliberately:
+%  - MECHANISM, which the 2026-09-23 version explained in paraphrase and Section 3.2
+%    defines properly: Tangent-S "reads a formula two ways, once as the arrangement of
+%    symbols on the page, once as the operations the expression performs"; Tangent-CFT
+%    "flattens each tree into a sequence of fragments, treats those fragments as words,
+%    and trains an embedding model over them". Avoiding the banned words (tree, tuple,
+%    SLT, OPT) did not make those sentences positional -- they were still the Chapter 3
+%    explanation in other clothes. Do not restore them.
+%  - the MathBERT bridge into Section 2.3. The old close pivoted on MathBERT's topic
+%    classification and headline generation ("no retrieval feeds that generation and no
+%    question is being answered"), which hinged the chapter's turn on a paper doing two
+%    things unrelated to retrieval.
+%  - "A second line learns the representation rather than building it" and the repeated
+%    use of *line* (Abram, 2026-09-24). One use survives, in the opening sentence.
+%
+% Fixed in this rewrite:
+%  - SSEMB'S LEADERBOARD CLAIM IS NO LONGER CITED TO SSEMB. The old version attributed
+%    "above every automatic run the lab itself recorded" to li2025ssemb; manifest §16
+%    warns explicitly against this, because SSEmb's own quoted TangentCFT2 figures
+%    disagree with the overview's (0.6868/0.6211 against 0.694/0.641). The leaderboard
+%    claim now cites mansouri2022arqmath3. Keep it that way.
+%  - the closing sentence manifest §6 asks for and the old version withheld: what this
+%    thesis reimplemented and what it did not, stated once. The old file comment sent C2
+%    to Section 1.5 and the no-retriever-training concession to Section 7.2 and left this
+%    section silent; the manifest wins, and *where this thesis stands* is what Related
+%    Work is for. One positional sentence -- not a contribution claim, not a limitation.
+%
+% ⚠ THE THIRD PARAGRAPH IS THE CHAPTER'S EXPOSED CLAIM. Four ARQMath participant systems
+%   combine formula structure with text for ANSWER retrieval -- MathDowsers (tuples from
+%   formula trees indexed beside text terms, best Task 1 participant run twice), Approach
+%   Zero with Anserini (operator-tree path tokens interpolated with a BM25 run), Approach
+%   Zero with ColBERT (structural matching plus a dense retriever, top across all three
+%   ARQMath-3 tasks), and Kassaie et al. 2025 (RRF over math and keyword components).
+%   None is cited here: Abram dropped them 2026-09-24 to avoid two new bib entries. The
+%   paragraph therefore argues from DPRL alone, and claims only what DPRL supports -- that
+%   the GROUPING of several formula representations has not been varied where answers are
+%   retrieved. It must never be widened back to "formula and text have never been
+%   combined for answer retrieval", which those four systems falsify.
+%   ⚠ Section 2.5's first gap still says the formula engines have never been entered into
+%   answer retrieval "let alone paired with a text retriever" -- reword with §2.5.
+%
+% Scope verified per paper: Tangent-S and the graph-contrastive work are NTCIR-12 only;
+% SSEmb is ARQMath-3 formula search only. Tangent-S's combination figures (bpref 0.524 /
+% 0.513 alone, 0.553 combined) stay held out -- a second measure on a second collection,
+% and the claim here is ordinal.
+% MathAMR is named nowhere: the DPRL sentence was simplified to "raw text with formulas
+% left in as written" (Abram, 2026-09-24). Manifest §6 still asks for DPRL/MathAMR.
+
+Section~\ref{sec:rw-mir} left the representations themselves as the open question.
+Tangent-S is where the line starts: it indexes two tree representations of a formula
+separately and scores a candidate on both, and Davila and Zanibbi report that using the
+two together retrieves better than either alone on the NTCIR-12
+collection~\cite{davila2017tangents}. That result, on formula search in 2017, is the
+published precedent for treating several representations as complementary. Tangent-CFT
+replaced the matching with learned vectors and merged its representations by summing
+them into one~\cite{mansouri2019tangentcft}. TangentCFT2 reversed that choice, holding
+four representations in four indexes and merging their rankings instead, inside formula
+search, where the formula system is the whole system~\cite{mansouri2022dprl}.
+
+MathBERT pre-trains a language model over formulas and the text around
+them~\cite{peng2021mathbert}; a graph-contrastive method learns formula embeddings with
+no relevance labels at all~\cite{wang2024gcl}. Both report gains over Tangent-CFT, and
+both were measured on NTCIR-12, a different collection with different queries and
+judgments, so neither figure can be set beside the ARQMath ones. SSEmb is the exception,
+and the strongest result of the three: it combines a formula's structure with its
+surrounding text and reports 0.734 nDCG$'$@10 at ARQMath-3 formula search, the highest
+among the automatic systems on its own recomputation of the
+leaderboard~\cite{li2025ssemb}. That figure is not on the lab's measure, so it cannot be
+set beside the published nDCG$'$ either.
+
+What these representations have not been asked is how they behave as a group.
+TangentCFT2 is the one system that holds several formula representations apart, and it
+does so only in formula search, where there is no text to combine them with. Its own
+team submitted five answer-retrieval runs at the same lab, and none of them used a
+formula index at all: they searched the raw text of the posts, with formulas left in it
+as written~\cite{mansouri2022dprl}. So the grouping of formula representations, and the
+way that group meets text retrieval, has not been varied and measured where answers are
+what is retrieved.
+
+This thesis rebuilds the Tangent-CFT-style stack from scratch and keeps its
+representations as separate indexes. Its formula embeddings are trained on the corpus's
+own formulas, and nothing in it is trained against relevance labels. What it varies is
+how those representations are grouped, so the learned systems above are not what it sets
+out to beat. Every system in this section is measured on the ranking it produces. None
+asks whether a difference visible at the ranking survives into the answer a language
+model writes from what was retrieved. Section~\ref{sec:rw-rag} takes that question up.
+
+
+\section{Retrieval-augmented generation}\label{sec:rw-rag}
+
+% Rewritten 2026-09-24 (Abram), replacing the 2026-09-24 first version. 590 w -> 371 w,
+% against a ~400 w budget. This section was the chapter's largest overrun.
+%
+% TWO CLAIMS WERE FALSE AND ARE NOW GONE. Found 2026-09-24 by search:
+%  (1) "Mathematics is barely present in any of this." Retrieval-augmented generation on
+%      mathematics is an active area: an Olympiad-level benchmark with a math-aware
+%      retrieval task and a retrieval-augmented problem-solving task (MathNet 2026);
+%      RAG against GraphRAG on an undergraduate textbook, measuring retrieval accuracy
+%      and answer quality separately over 477 question-answer pairs (Chen et al. 2025);
+%      a dual-index framework combining vector retrieval with a knowledge graph for
+%      school mathematics (Jiang et al. 2026); multi-embedding maths QA (Confident RAG,
+%      2025); and RAG over reasoning traces (Arabzadeh et al. 2026). Only MathNet is
+%      cited here; the others are in manifest §16's note.
+%  (2) "Retrieval quality and answer quality are two measurements, and the first is a
+%      poor proxy for the second." Contested, not settled. Salemi and Zamani hold up
+%      (229 citations) and Ghosh et al. 2026 corroborate across five benchmarks, but Guo
+%      et al. 2025 report a strong positive relationship on one corpus and a weak one on
+%      another, and MathNet reports answer quality highly sensitive to retrieval quality.
+%      ⚠ The section now says the question is UNSETTLED, which is a better reason for RQ2
+%      to exist: if the link were simply weak, measuring it again would prove little.
+%      Do not restore the flat claim.
+%
+% Cut in this rewrite, deliberately:
+%  - THE RAG DEFINITION. The old opening defined retrieval-augmented generation -- search
+%    step in front of a language model, passages into the prompt, model writes the answer.
+%    Section 3.7 italicises and defines that term, with *generator* and *context*. It is a
+%    Chapter 3 term and the ordering constraint forbids it here.
+%  - "An answer has to be scored for whether it is true, and for whether it follows from
+%    what was retrieved" -- Section 3.7's own sentence pair ("whether the answer is
+%    grounded in the context it was given, and whether it is correct").
+%  - THE RAGAS GLOSS. "which score a generated answer using a language model in place of a
+%    human annotator" is near-verbatim §3.7's definition. Manifest §16: RAGAS is NAMED in
+%    §2.3 and DEFINED in §3.7. It is named here and nothing more.
+%  - Henkel's three prompt conditions (~90 w). They are about prompt guidance, which
+%    supports §6.2's single-prompt decision; manifest §16 already assigns Henkel to §6.2.
+%    Only the relevance-against-preference finding stays, which is what §2.3 needs.
+%  - "It would be natural to assume the two are connected" -- throat-clearing.
+%
+% Fixed: Henkel's null is no longer stated as "relevance did not predict preference". The
+% paper reports no SIGNIFICANT relationship over 51 questions; §1c-i bans that word, so the
+% prose gives the sample size and says what they found. Same error still live in §2.5.
+%
+% Sourcing notes retained from the 2026-09-24 version:
+%  - Salemi & Zamani Table 1: Kendall's tau between retrieval scores and downstream RAG
+%    performance, five collections, two retrievers. Human relevance annotations top out
+%    near 0.2 and are often ~0. Written here as "no higher than about 0.2" -- true of
+%    every cell in that block. "Five widely used benchmark collections", not "question
+%    answering": two of the five are not QA (Abram, 2026-09-24).
+%  - NOT USED HERE, but belongs in §7.2: the same table shows labels assigned by a language
+%    model correlate no better with answer quality than human ones. This thesis reads
+%    generation quality against judge labels, so §7.2 should concede it.
+%  - ARQMath Task 3: Table 5, printed p. 307 (GPT-3 baseline AR 1.346 / P@1 0.500 against
+%    approach0 run1 1.282 / 0.436); reusability passage, printed p. 308. The organisers do
+%    NOT say the problem is unsolved -- they propose overlap-based measures -- so the prose
+%    says they "note a difficulty", not that they could not solve it.
+%  - ⚠ alshammari2026mathnet carries TODO fields in sources.bib and has no PDF in
+%    thesis/literature/. Its claim here is pitched at what the abstract supports.
+%
+% NAMING vs DEFINING (Abram, 2026-09-24). The first paragraph names *retrieval-augmented
+% generation* as what Lewis et al. called their arrangement. That is attribution, not a
+% definition: §3.7 still defines the term, italicised, with *generator* and *context*, and
+% Chapter 2 must never italicise it or explain the machinery. The ordering constraint is
+% carved out for it in manifest §6 -- the term that names a section may be used inside that
+% section, since the heading puts it in front of the reader either way.
+%
+% ⚠ Section 2.5's second gap leg still says "On mathematical questions almost nothing has
+%   been measured at all". That is the claim (1) above, and it must be reworded with §2.5.
+
+A retriever used to be the last stage of a search system. It is now often the first
+stage of a system that writes the answer itself, the arrangement Lewis et al.\ set out
+and named retrieval-augmented generation~\cite{lewis2020rag}. So what gets judged is the
+answer and not the ranking that produced it, and those are two different measurements.
+
+Whether the first carries into the second is unsettled. Salemi and Zamani scored
+retrievers with the usual ranking measures against human relevance annotations, compared
+those scores against how well the surrounding system answered, and found rank
+correlations no higher than about 0.2 across five widely used benchmark collections,
+often close to zero~\cite{salemi2024erag}. That result is hard to check against most
+published work, because most of it reports only the end of the pipeline: the generated
+answer is compared against a known correct answer, and how well the retrieval step did on
+its own is never stated, so an improvement cannot be traced to one part or the
+other~\cite{salemi2024erag}. Frameworks such as RAGAS are a recent
+attempt to make the generation side measurable at all~\cite{es2024ragas}.
+
+On mathematics the picture is different again, and thinner than it looks. Henkel and
+colleagues built a tutoring system for middle-school students over a free prealgebra
+textbook, annotated how relevant each retrieved section was, and over fifty-one questions
+found no relationship between that relevance and which answers readers
+preferred~\cite{henkel2024mathrag}. A recent Olympiad-level benchmark reports the
+opposite for problem solving, where answer quality is highly sensitive to how good the
+retrieval is~\cite{alshammari2026mathnet}. Both search curated corpora of prepared
+material by semantic similarity. Neither varies how formulas are represented in the
+retriever, so neither says whether a formula index reaches the answer.
+
+ARQMath ran a generation task of its own in 2022, over the same questions as its answer
+retrieval task. A baseline that retrieved nothing and answered from the model alone
+scored higher than every participating system~\cite{mansouri2022arqmath3}. The organisers
+also note a difficulty with reusing what they collected: the judgments made there cannot
+be applied to later systems in the way retrieval judgments can, because the measures
+depend on matching a new answer against one already judged~\cite{mansouri2022arqmath3}.
+That difficulty is not particular to generation, and
+Section~\ref{sec:rw-incomplete-judgments} takes it up.
+
+
+\section{Evaluation with incomplete relevance judgments}\label{sec:rw-incomplete-judgments}
+
+% Rewritten 2026-09-24 (Abram), replacing the 2026-09-24 first version. 707 w -> ~450 w,
+% against a ~450 w budget. This was the chapter's last overrun.
+%
+% Title chosen over "post-hoc evaluation" because this thesis already uses "post-hoc" in
+% the other sense -- the §7.2 row disclosing H1.3 as restated after its data was known.
+% Two meanings of one word is the defect the review named.
+%
+% Cut in this rewrite, deliberately:
+%  - MECHANISM, twice. The old version explained how bpref works ("looks only at the
+%    documents that were judged and asks whether the relevant ones were ranked above the
+%    irrelevant ones") and how condensing works ("measures that simply drop the unjudged
+%    documents from a ranking and score what is left"). §3.5 defines the prime variants
+%    and names bpref. Both are now characterised in a clause, not explained.
+%  - THE THESIS ARGUING ON CLARKE & DIETZ'S BEHALF. The old version explained *why*
+%    agreement collapses at the top -- "the systems at the top all put plausible documents
+%    first; what separates them is whether those documents really answer the question" --
+%    which they do not say. ~45 w of unsourced reasoning, now replaced by Fröbe's measured
+%    mechanism. Do not restore it, and do not restore "agreement that holds across a whole
+%    field but fails at the top is agreement on the comparisons that did not need making":
+%    it is rhetoric, not a finding.
+%
+% Fixed in this rewrite:
+%  - A CITATION DEFECT. The old version said Upadhyay et al. "rebuilt the method as an
+%    open-source tool, UMBRELA, and then tested it in public: 77 runs from 19 teams",
+%    citing upadhyay2025umbrela for both halves. Those are TWO papers: the toolkit
+%    (upadhyay2024umbrelatool) and the TREC 2024 RAG Track study (upadhyay2025umbrela,
+%    which is the PDF in thesis/literature/). The toolkit claim was unsourced.
+%    ⚠ SUPERSEDED 2026-09-29 (citation audit): upadhyay2024umbrelatool was a metadata
+%    stub (author "and others", no identifier, arXiv-only) and has been REMOVED. The
+%    sentence now cites upadhyay2025umbrela alone, which is where "77 runs from 19 teams"
+%    actually appears; the toolkit paper evaluates on TREC DL 2019-23 and never states it.
+%  - One finding added from a paper already cited: the TREC study also found that having
+%    humans check the model's labels did not improve agreement over full automation. That
+%    is independent support for §1c-i decision 2 and for retiring llm_plus_human, beside
+%    Abbasiantaeb's. Worth keeping when this section is cut further.
+%
+% Added 2026-09-24, both earning their place twice:
+%  - froebe2025assessors. Eight automatic assessors on TREC DL and the RAG track: they
+%    agree with each other more than with humans, and they overrate systems that use a
+%    language model to rank by 9-17 positions across 30-50 systems. This is Clarke &
+%    Dietz's "biased toward LLM-based rankers" with a number on it. ⚠ ITS SECOND USE IS
+%    §4.4: this thesis's retrieval stack contains no language model, so the bias is
+%    measured, quantified, and demonstrably does not apply here -- a far stronger reply
+%    than the qualitative one §16 currently plans against Soboroff.
+%  - szymanski2025judgelimits (key renamed 2026-09-29; arXiv 2024, published IUI 2025).
+%    Subject-matter experts agreed with an automatic judge 68%
+%    of the time in dietetics and 64% in mental health. ⚠ THIS IS C3'S THIRD LEG,
+%    EVIDENCED: the case that automatic labels are unproven where judging needs
+%    specialist knowledge no longer rests on assertion. §2.5's third leg survives on it
+%    while legs one and two do not.
+%
+% Constraints honoured: no Chapter 3 vocabulary -- no "pool" (the process is described
+% instead), no "prime", no "judge" as a noun for the model, no kappa, no Kendall's tau by
+% name. "Rank correlation" is allowed (Abram, 2026-09-24) and carries Clarke & Dietz's
+% figures. Thomas et al.'s spread is given qualitatively because those numbers are Cohen's
+% kappa, which means nothing without §3.6.
+%
+% Sourcing notes:
+%  - UMBRELA's weaker agreement is RUN LEVEL vs TOPIC LEVEL, not per-document.
+%  - Clarke & Dietz: 0.89 over the whole field, 0.56 among the top fifteen.
+%  - Buckley & Voorhees' caveat is about bpref, their own measure, but the assumption is
+%    shared with condensed-list measures, which is why the paragraph states it as shared
+%    before attributing the caveat.
+%  - FAGGIOLI REMOVED 2026-09-24 (Abram), kept in the bib, uncited. ⚠ At 250 citations it
+%    is the most-cited paper in this space; the cut is defensible on framing but that is
+%    the weight being left out.
+%  - SOBOROFF REMOVED 2026-09-24 (Abram). His ceiling objection belongs in §4.4, where the
+%    reply is available. Bib entry kept for that use.
+%  - ⚠ Abbasiantaeb et al. published a 2025 follow-up partly SOLVING the hole-filling
+%    problem with a fine-tuned model, so the 2024 pessimism this section reports is being
+%    walked back by its own authors. Not cited; recorded in §16.
+%  - ✓ RESOLVED 2026-09-29 (citation audit). froebe2025assessors and
+%    szymanski2025judgelimits are fully verified against the published records;
+%    upadhyay2024umbrelatool was removed. sources.bib now carries no TODO or UNVERIFIED
+%    markers. Neither remaining entry has a PDF in thesis/literature/, but both were
+%    checked field by field against Crossref, OpenAlex and the camera-ready.
+
+No collection of any size is judged completely. There are far too many documents, so the
+systems taking part submit their rankings and the documents near the top go to the
+assessors. Everything else is left unjudged, and unjudged normally counts as not
+relevant. That works for the systems that were there at the time. A system built
+afterwards retrieves documents nobody ever looked at, and is marked down for finding
+things that may have been good answers.
+
+One response is to change the measure rather than the labels. Buckley and Voorhees
+proposed bpref, which scores a ranking on its judged documents
+alone~\cite{buckley2004incomplete}; Sakai and Kando later deleted judgments from real
+collections to see which measures still ordered systems correctly, and found the
+condensed family most robust~\cite{sakai2008prime}. Both set aside what nobody looked at,
+and both are safe only if the unjudged documents are no better and no worse than the
+judged. Buckley and Voorhees decline to conclude that bpref fairly evaluates a system
+which did not take part, since a new system can break that
+assumption~\cite{buckley2004incomplete}.
+
+The other response is to supply the missing labels. Thomas and colleagues showed that a
+carefully written prompt produces labels close to those of trained assessors on web
+search, and how delicate that is: across thirty-two variants, agreement ranged from
+$\kappa$ 0.20 to 0.62~\cite{thomas2024llm}. An open-source reproduction, UMBRELA, was then run
+across a public evaluation of seventy-seven runs from nineteen teams beside the
+organisers' own assessors~\cite{upadhyay2025umbrela}. Rankings of
+whole systems came out close; agreement topic by topic was weaker, the model was more
+lenient, and having humans check its labels did not improve the
+match~\cite{upadhyay2025umbrela}.
+
+That result is disputed in three ways. Clarke and Dietz set that overall rank correlation
+of 0.89 against the 0.56 they find among the top fifteen systems --- where the
+comparison matters~\cite{clarke2024llmassessment}. Fr\"obe and colleagues compared
+eight automatic assessors. They agreed with each other more closely than any of them
+agreed with a human, and they favoured systems that used a language model to rank,
+placing those on average
+nine to seventeen positions too high~\cite{froebe2025assessors}. And Abbasiantaeb and
+colleagues labelled only the documents nobody had judged, then used those labels beside
+the assessors' own; that mixture tracked the assessors worse than labelling every
+document automatically did~\cite{abbasiantaeb2024holes}.
+
+All of that evidence comes from web search, general question answering and conversational
+search. Where judging needs specialist knowledge the picture is worse: in two
+professional fields, subject-matter experts agreed with an automatic judge on roughly two
+thirds of cases, 68\% and 64\%~\cite{szymanski2025judgelimits}. Anyone relying on automatic labels
+therefore has to show they work on the collection in hand rather than point at results
+from another.
+
+
+\section{Research gap}\label{sec:rw-gap}
+
+% Rewritten 2026-09-24 (Abram), replacing the 2026-09-24 first version. 287 w -> 263 w,
+% against a ~280 w budget. Three short paragraphs, one per gap, mapping to RQ1, RQ2 and C3.
+% States questions only -- no outcome, no hypothesis ID, no figure of this thesis's own, and
+% NO RESEARCH QUESTION NAMED: the reader met those in Chapter 1, and naming them here turns
+% the section into a checklist. No new citations either; every source already appears in
+% Sections 2.1-2.4.
+% The chapter ends here with no forward pointer. Chapter 3 inherits machinery, not an
+% argument, so there is no tension for one to resolve.
+%
+% ⚠ TWO OF THE THREE LEGS WERE FALSE IN THE FIRST VERSION. Both fixed here; do not let
+%   either wording return.
+%
+%  LEG 1 said the formula engines had "never been entered into the answer retrieval task at
+%  all, let alone paired with a text retriever". The narrow half survives -- no tree-EMBEDDING
+%  engine has been -- but the "let alone" clause is false. Four ARQMath participant systems
+%  pair formula structure with text for answer retrieval: MathDowsers (tuples from formula
+%  trees indexed beside text terms in one engine, best Task 1 participant run twice, Kane et
+%  al. 2022), Approach Zero with Anserini (operator-tree path tokens interpolated with a BM25
+%  run, Zhong et al. 2021), Approach Zero with ColBERT (structural matching plus a dense
+%  retriever, top across all three ARQMath-3 tasks, Zhong et al. 2022) and Kassaie et al. 2025
+%  (RRF over math and keyword components). None is cited in the thesis or in sources.bib.
+%  The leg now argues the GROUP claim §2.2 makes: the combining has been done, and in every
+%  case the formula side was one index rather than several.
+%
+%  LEG 2 said "On mathematical questions almost nothing has been measured at all". False:
+%  MathNet (2026), Chen et al. 2025 on an undergraduate textbook, Jiang et al. 2026's
+%  dual-index framework, Confident RAG (2025) and Arabzadeh et al. 2026 all measure it. See
+%  manifest §16's note under §2.4. It also asserted that retrieval quality "turns out to be a
+%  poor guide to how good the answer is" -- the flat claim §2.3 retired on 2026-09-24, so the
+%  chapter contradicted itself two pages apart. The leg now says the relationship is
+%  unsettled, and that what none of that work varies is how formulas are represented.
+%
+%  LEG 3 SURVIVES AND IS NOW BETTER EVIDENCED. §2.4 carries Szymanski's 68% / 64% expert
+%  agreement, so this leg leans on a measured finding instead of asserting. Of the three, it
+%  is the only one the 2026-09-24 searches strengthened.
+%
+% Also fixed: the first version re-narrated Henkel, a study the reader met in §2.3, and
+% repeated its overstated null. A gap section names what is missing; the evidence lives in
+% §2.1-§2.4. And all three paragraphs closed on the same frame -- "is not known", "has not
+% been asked", "has not been established". The closers now differ.
+%
+% The shape each leg follows, and the reason it is repeated: state what HAS been done, then
+% the one variation this thesis makes that has not. An absence claim invites a counterexample;
+% two of them got one. Naming the adjacent work first is what makes the remaining gap hard to
+% attack.
+
+The first gap is on the retrieval side. Formula representations are built and tuned for
+formula search, and that is where they are compared against one another. Systems built to
+retrieve answers have combined formulas with text before. In each of them the formulas
+were handled by a single index, not several. The only system that keeps several formula
+representations apart does so in formula search, where there is no text to combine them
+with~\cite{mansouri2022dprl}. So the grouping of those representations, and the way that
+group meets text retrieval, is untried where answers are what is retrieved.
+
+The second gap is at the far end of the pipeline. Whether better retrieval yields better
+answers is unsettled in general, and on mathematics it has been measured only over curated
+corpora of prepared material, textbook sections and problem sets retrieved by semantic
+similarity~\cite{henkel2024mathrag,alshammari2026mathnet}. None of that work varies how
+formulas are represented in the retriever. So whether a difference that is visible at the
+ranking survives into the answer, on mathematics, has not been asked.
+
+The third gap is in whether any of it can be measured. A system built after a collection
+was judged is scored against judgments made for other systems, and the two remedies,
+changing the measure or supplying the missing labels, both rest on assumptions the
+literature has not settled. Automatic labels have been tested on web search, on general
+question answering and on conversational search. Where judging needs specialist knowledge,
+they agree with human experts less often than those experts agree with one
+another~\cite{szymanski2025judgelimits}. No one has
+tested them on mathematical answers, where relevance turns on whether an explanation
+actually helps.

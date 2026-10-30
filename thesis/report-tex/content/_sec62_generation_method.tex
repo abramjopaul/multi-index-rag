@@ -1,0 +1,195 @@
+% Chapter 6 section 6.2: method.
+% Rewritten 2026-09-26 (manifest §9b row 6.2), drafted in the chat and approved before this write.
+% Replaces the version of 2026-09-15, which described the retired two-template design (v1/v2),
+%   3B as the primary generator, the refusal string, 1024 tokens and the context-depth sweep.
+% Carries: what was generated (floor defined at first use; the fifteen configurations of §5.2.2; the
+%   two larger generators for RQ3); the context size as a design choice; ONE prompt, as Figure 6.1,
+%   with no version number anywhere (CLAUDE.md §5); the generator settings as Table 6.1; reference
+%   construction, with the community-score ordering §4.1 points here for; the two measures as RAGAS
+%   computes them; faithfulness's missing upper anchor; and how the association is reported.
+% Deliberately NOT here: faithfulness as attribution (stated once in §6.1); any oracle condition
+%   (not reported -- manifest §9b, 2026-09-26); FC-recall (not reported -- same note); the word
+%   "condition" (optional per §7a, and dropped); any depth sweep.
+% Numbers to register in R9 before this is quoted elsewhere: no answer reached the token ceiling;
+%   74 of 78 topics take a full five-answer reference; one faithfulness score is undefined (3B text
+%   fusion); claim counts mean 6, median 6, range 1-22 over the 2,118 of 2,184 reported answers whose
+%   score file records n_claims (the 3B blocked run does not record it for 63 of its 78 answers).
+% Model revisions are NOT pinned (configs/task_c/generation_eval.yaml says revision: main), so the
+%   section claims no pinning; the template itself lives in the run records, not in prompt_template.py.
+% Floats: both captions sit below their content (review E3). Check placement on the build -- one
+%   table that cannot be placed defers every later table in the chapter (§15 float-discipline note).
+%   Width (fixed 2026-09-26): the listing is hand-wrapped to 62 characters, just inside the 63 the
+%   the widest line the frame holds at \footnotesize; Table 6.1's two sanity-check generators sit on
+%   separate lines because both names in one cell ran the tabular 115pt past the text block.
+
+\section{Method}\label{sec:gen-method}
+
+Section~\ref{sec:bg-generation-metrics} defined retrieval-augmented generation and the two
+measures this chapter reports, and Section~\ref{sec:met-system-overview} placed the generator at
+the end of the pipeline: the highest-ranked answers of a ranking become its context, and one fixed
+prompt turns the question and that context into an answer. This section states what was generated,
+from which contexts, and how the answers were scored. There is no query rewriting, no reranking, no
+agentic loop and no adjustment of the prompt from one set of answers to the next.
+
+\subsection*{What was generated}
+
+Three sets of answers, all on the 78 topics of Section~\ref{sec:met-collection}. The first receives
+no context at all: the generator is given the question alone and answers from its own knowledge.
+This is the \emph{floor}, the level any retrieved context has to improve on. The second set comes
+from the fifteen retrieval configurations of Section~\ref{sec:met-retrieval-configs}, each supplying
+the five highest-ranked answers of its own ranking as the context for that topic. The third repeats
+part of that work at two larger generators, for the sanity check the third research question asks:
+the floor and five of the fifteen configurations --- the two text indexes, their fusion, the formula
+block and the blocked system --- are generated again at 3 and at 7 billion parameters. Everything
+else is held fixed, so what separates any two sets of answers is the context the generator was
+given, and in the third set the size of the generator as well.
+
+A context of five answers is a design choice rather than a measured optimum. It matches the size of
+the reference the answers are scored against, and it is held fixed everywhere, so that no comparison
+mixes a difference in how much context was supplied with a difference in which retrieval supplied
+it. No sweep over that size is run.
+
+\subsection*{The prompt}
+
+Figure~\ref{fig:gen-prompt} shows it, and one template serves everything in this chapter. It
+presents the retrieved answers, asks for the question to be answered, and permits the generator its
+own knowledge alongside the context while asking it to prefer the context where the two conflict. It
+instructs no refusal, so a weak context still yields an answer rather than a decline. When there is
+no context the retrieved-context block disappears and the rest of the template is unchanged, which
+is how the floor is generated: the floor and every retrieval configuration render from the same
+template. That is what makes Section~\ref{sec:gen-results} a comparison of contexts.
+
+\begin{figure}[t]
+\begin{lstlisting}[frame=single,numbers=none,basicstyle=\ttfamily\footnotesize,
+  breaklines=false,columns=fullflexible,xleftmargin=1em]
+[SYSTEM]
+You are a mathematics question-answering assistant. Answer the
+question as accurately and completely as you can, and write
+all mathematics in LaTeX. Retrieved context may be provided
+below; when it is, use it wherever it helps, and prefer it
+over your own recollection where the two conflict. You may
+also draw on your own knowledge, whether or not retrieved
+context is provided. Give the reasoning needed to justify the
+answer, without restating the question or padding.
+
+[USER]
+Retrieved context:
+[1] <first retrieved answer>
+
+[2] <second retrieved answer>
+
+    ...
+
+[5] <fifth retrieved answer>
+
+Question:
+<the topic's title and question body>
+
+Answer:
+\end{lstlisting}
+\caption[The answer-generation prompt]{The answer-generation prompt. One template serves every set
+of answers in this chapter. The retrieved answers are numbered in the order the ranking returns them
+and stand here as placeholders. When no context is supplied the \emph{Retrieved context} block is
+absent and the rest of the template is unchanged, which is how the answers without context --- the
+floor --- are generated. The system message is a single line in the template and is wrapped here to
+fit the page.}
+\label{fig:gen-prompt}
+\end{figure}
+
+\subsection*{The generator}
+
+Table~\ref{tab:gen-settings} lists the settings. Decoding is greedy: the temperature is zero, so the
+generator always takes the most probable next token, and answers are produced one prompt at a time.
+Each setting was generated once, and greedy decoding leaves nothing to average --- with the
+temperature at zero and the seed fixed, a repeat of the same setting returns the same answers. The
+limit on new tokens is 2{,}048, and no answer reached it, so every answer was scored whole rather
+than broken off in mid-derivation.
+
+\begin{table}[t]
+\centering
+\begin{tabular}{ll}
+\toprule
+Setting & Value \\
+\midrule
+Generator                & \texttt{Qwen/Qwen2.5-1.5B-Instruct} \\
+Generators, sanity check & \texttt{Qwen/Qwen2.5-3B-Instruct} \\
+                         & \texttt{Qwen/Qwen2.5-7B-Instruct} \\
+Precision                & bfloat16 \\
+Temperature              & 0.0 \\
+Top-$p$                  & 1.0 \\
+Maximum new tokens       & 2{,}048 \\
+Seed                     & 42 \\
+Runs per setting         & 1 \\
+Context size             & 5 answers \\
+\addlinespace
+Scoring framework        & RAGAS 0.4.3 \\
+Scoring model            & \texttt{gemini-3.5-flash-lite}, temperature 0 \\
+Claim decomposition      & atomicity high, coverage high \\
+\bottomrule
+\end{tabular}
+\caption[Generation and scoring settings]{Generation and scoring settings. Every answer in this
+chapter is produced and scored with these settings; the generator changes only where its size is the
+thing being varied. \emph{Atomicity} and \emph{coverage} govern how finely a text is decomposed into
+claims (Section~\ref{sec:bg-generation-metrics}). The scoring model is the one the scoring framework
+uses for its own judgements, and is not the relevance judge of
+Section~\ref{sec:met-judge-validation}.}
+\label{tab:gen-settings}
+\end{table}
+
+\subsection*{The reference}
+
+Factual correctness needs a reference, and Section~\ref{sec:bg-generation-metrics} left what it is
+built from to this section. It is built from the assessors' judgments alone, never from the relevance
+judge's labels, which would otherwise grade the pipeline against labels its own judge supplied. A
+mathematics question usually admits several valid routes to the same result, so a single answer taken
+as the reference would mark a correct answer wrong for having taken another route. The reference is
+therefore the union of up to five judged answers for the topic: High-labelled answers first, filled
+from Medium where a topic has fewer than five, and ordered within a label by the community score the
+collection records. Seventy-four of the 78 topics have five or more such answers and take the full
+five; the remaining four take the two, three or four they have. No topic is scored without a
+reference.
+
+\subsection*{The measures as computed}
+
+Both are computed with RAGAS 0.4.3, whose own language model performs every judgement. It is the
+same model the relevance judge of Section~\ref{sec:met-judge-validation} uses, doing a different task
+as a different instrument; nothing in that section validates it.
+
+Faithfulness is computed in two steps. The model first rewrites the answer into standalone
+statements, each understandable without the others. It then judges each statement against the
+retrieved context taken as one body of text and returns a verdict with a reason. The score is the
+share of statements it can infer from the context. Where an answer yields no statements at all the
+score is undefined rather than zero, which happens once across the runs reported here.
+
+FC-P follows the same shape with the reference in place of the context. The model decomposes the
+answer into claims and checks each against the reference; the reference itself is never decomposed,
+so the score is the share of the answer's claims that the reference supports. Both parameters
+Section~\ref{sec:bg-generation-metrics} names are set high --- atomicity, so that a sentence is split
+into its indivisible claims, and coverage, so that the detail of each survives the split --- and the
+setting is the same for every answer in this chapter. Across the answers reported here the
+decomposition yields six claims on average, with a median of six and a range from one to twenty-two.
+The framework rounds each factual-correctness score to two decimals. Faithfulness and FC-P decompose
+the same answer separately, so the two scores are not fractions of one set of claims.
+
+Read together, the two measures say where an answer came from. Because the generator is never
+required to confine itself to the context, a correct answer may be its own work or the context's, and
+the pair distinguishes the two: a high FC-P with a low faithfulness is a correct answer the generator
+largely wrote from what it already knew, while a high FC-P with a high faithfulness is a correct
+answer the context supplied. What the pair cannot supply is a ceiling for faithfulness. Since no
+answer here was written under an instruction to use the context alone, faithfulness is read as a
+share of what the answer says and never as a distance from an attainable maximum.
+
+\subsection*{Relating answer quality to retrieval quality}
+
+Two hypotheses read an association across configurations rather than a comparison between two sets of
+answers. Retrieval quality is nDCG$'$@10 under the judge labels of
+Section~\ref{sec:met-evaluation-protocol}, the primary measure of Chapter~\ref{ch:retrieval}, over
+the same fifteen configurations. The association is reported as the Kendall's $\tau$ of
+Section~\ref{sec:bg-agreement}, computed over all 105 pairs of those fifteen. It is computed on the
+means before rounding, and it is reported for its sign and its size. No statistical test is applied
+to it.
+
+The sanity check reads the same coefficient over the five configurations generated at all three sizes
+--- ten pairs --- and reads them at 1.5 billion parameters as well, so that the three sizes are
+compared on one instrument. Those three values may be set beside one another; none of them may be set
+beside the coefficient over fifteen configurations, which is computed from ten times as many pairs.
