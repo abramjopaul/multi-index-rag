@@ -1,128 +1,57 @@
-_wandb:
-    value:
-        cli_version: 0.27.2
-        e:
-            wvq1f8j4k952rgpue0kwsj6e3jgnyoqr:
-                args:
-                    - --trec-file
-                    - data/runs/track_b/bm25_baseline_20260618.tsv
-                    - --config-name
-                    - bm25
-                codePath: experiments/track_c/generate_and_score.py
-                codePathLocal: experiments/track_c/generate_and_score.py
-                cpu_count: 8
-                cpu_count_logical: 16
-                cudaVersion: "13.3"
-                disk:
-                    /:
-                        total: "206900281344"
-                        used: "165289144320"
-                email: abramjopaul@gmail.com
-                executable: /home/abramjopaul/multi-index-rag/.venv/bin/python
-                git:
-                    commit: a0dc9ac3f8680db989232270eddbbf4ee07c878d
-                    remote: https://github.com/abramjopaul/multi-index-rag.git
-                gpu: NVIDIA L4
-                gpu_count: 1
-                gpu_nvidia:
-                    - architecture: Ada
-                      cudaCores: 7424
-                      memoryTotal: "24152899584"
-                      name: NVIDIA L4
-                      uuid: GPU-352df581-ca39-481a-d928-0513ea226b1a
-                host: multi-index-rag-gpu
-                memory:
-                    total: "67418710016"
-                os: Linux-6.17.0-1021-gcp-x86_64-with-glibc2.39
-                program: /home/abramjopaul/multi-index-rag/experiments/track_c/generate_and_score.py
-                python: CPython 3.12.3
-                root: /home/abramjopaul/multi-index-rag
-                startedAt: "2026-08-13T17:25:38.496063Z"
-                writerId: wvq1f8j4k952rgpue0kwsj6e3jgnyoqr
-        m: []
-        python_version: 3.12.3
-        t:
-            "1":
-                - 1
-                - 5
-                - 11
-                - 41
-                - 49
-                - 51
-                - 53
-                - 71
-                - 95
-                - 105
-            "2":
-                - 1
-                - 5
-                - 11
-                - 41
-                - 49
-                - 51
-                - 53
-                - 71
-                - 95
-                - 105
-            "3":
-                - 2
-                - 3
-                - 13
-                - 15
-                - 16
-            "4": 3.12.3
-            "5": 0.27.2
-            "6": 4.57.6
-            "12": 0.27.2
-            "13": linux-x86_64
+# Weights & Biases run record. The _wandb metadata block was removed before
+# publication (it carried local paths and account details); the run parameters
+# and provenance hashes below are unchanged.
+# Hardware: NVIDIA L4 x1, CUDA 13.3
+# git_commit below points at the post-rewrite history (remapped 2026-10-30).
+
 config_name:
-    value: bm25
+  value: bm25
 config_sha256:
-    value: b1930c9abbf06f76a567cf1a1672368b48afb8544c56eb087102c69bbf7a0e13
+  value: b1930c9abbf06f76a567cf1a1672368b48afb8544c56eb087102c69bbf7a0e13
 generator_backend:
-    value: hf
+  value: hf
 generator_model:
-    value: Qwen/Qwen2.5-3B-Instruct
+  value: Qwen/Qwen2.5-3B-Instruct
 git_commit:
-    value: a0dc9ac3f8680db989232270eddbbf4ee07c878d
+  value: c90eb050f3154221549fef60bd50af031d3ffcf5
 git_dirty:
-    value: true
+  value: true
 google_genai_version:
-    value: 2.15.0
+  value: 2.15.0
 instructor_version:
-    value: 1.15.4
+  value: 1.15.4
 judge_metrics:
-    value:
-        - faithfulness
-        - factual_correctness_precision
-        - factual_correctness_recall
+  value:
+  - faithfulness
+  - factual_correctness_precision
+  - factual_correctness_recall
 judge_model:
-    value: gemini-3.5-flash-lite
+  value: gemini-3.5-flash-lite
 judge_temperature:
-    value: 0
+  value: 0
 k:
-    value: 5
+  value: 5
 max_new_tokens:
-    value: 1024
+  value: 1024
 max_reference_answers:
-    value: 10
+  value: 10
 no_rag:
-    value: false
+  value: false
 prompt_sha256:
-    value: 70648ca448a8c5720903590f107e70db1a190f66cfbfab1517f88a478af9eda8
+  value: 70648ca448a8c5720903590f107e70db1a190f66cfbfab1517f88a478af9eda8
 prompt_template_version:
-    value: v2
+  value: v2
 python_version:
-    value: 3.12.3
+  value: 3.12.3
 qrels_path:
-    value: /home/abramjopaul/multi-index-rag/data/raw/qrels/qrel_task1_2022_all.tsv
+  value: data/raw/qrels/qrel_task1_2022_all.tsv
 qrels_sha256:
-    value: 2b5565f988fbaf58ff5d86102a170feaaca14eb667091ac4879c1ff55bf458c3
+  value: 2b5565f988fbaf58ff5d86102a170feaaca14eb667091ac4879c1ff55bf458c3
 ragas_version:
-    value: 0.4.3
+  value: 0.4.3
 seed:
-    value: 42
+  value: 42
 timestamp_utc:
-    value: "2026-08-13T17:25:37.135546+00:00"
+  value: '2026-08-13T17:25:37.135546+00:00'
 trec_file:
-    value: data/runs/track_b/bm25_baseline_20260618.tsv
+  value: data/runs/track_b/bm25_baseline_20260618.tsv
