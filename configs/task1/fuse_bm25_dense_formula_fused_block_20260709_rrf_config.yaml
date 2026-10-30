@@ -11,7 +11,7 @@ execution_mode:
 fill_depth:
   value: 20
 git_commit:
-  value: 79d2fec6e7d45ab7a9bb171bcb45c0d4a86592b9
+  value: 3f853f0a6329db8d39da224fd4f6899b7a556eeb
 git_dirty:
   value: true
 google_genai_version:

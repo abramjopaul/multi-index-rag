@@ -19,7 +19,7 @@ generator_backend:
 generator_model:
   value: Qwen/Qwen2.5-7B-Instruct
 git_commit:
-  value: c90eb050f3154221549fef60bd50af031d3ffcf5
+  value: 97571945672685907dd38919a7f921b674883ab5
 git_dirty:
   value: true
 google_genai_version:
