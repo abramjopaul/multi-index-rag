@@ -67,3 +67,7 @@ cuda_installer.pyz
 # OS
 # ---------------------------------------------------------------------------
 .DS_Store
+
+# Reference copy of upstream TangentCFT, not a dependency.
+# src/multirag/formula_search/ holds the adapted ports actually used.
+external/
