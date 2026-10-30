@@ -1,43 +1,69 @@
+# ---------------------------------------------------------------------------
 # Secrets — never commit
+# ---------------------------------------------------------------------------
 .env
+.env.*
+!.env.example
 
-# Poetry virtualenv (Poetry manages this outside the project by default,
-# but ignore it if you've configured it to be inside)
-.venv/
-
-# VSCode settings
-.vscode/  
-
-# Cursor files
-.cursor/  
-
-# Data — too large for git
+# ---------------------------------------------------------------------------
+# Large artefacts. Not in git; see docs/reproduce.md for how to obtain them.
+# ---------------------------------------------------------------------------
+# ARQMath-3 collection, derived representations and built indexes (~31 GB)
 data/
-
-# Track V: judge cache and result artifacts — too large for git
+# Judge response cache
 .cache/
-results/
-
-thesis/
-
-# Weights & Biases logs
+# Weights & Biases local logs (W&B is a mirror; local result files are canonical)
 wandb/
+# Retrieval run files and generation outputs (~210 MB)
+results/
+# Working run directory
+experiments/runs/
 
-experiments/runs
+# ---------------------------------------------------------------------------
+# Thesis sources. The manifest is tracked as the project's design record;
+# the LaTeX build, literature PDFs and dated snapshots are not.
+# ---------------------------------------------------------------------------
+thesis/*
+!thesis/manifest.md
 
+# ---------------------------------------------------------------------------
+# Dated snapshots of working documents — local history, not repo history
+# ---------------------------------------------------------------------------
+*.bak.*
+*.preWritten.*
 
-# Python cache
+# ---------------------------------------------------------------------------
+# Pre-publication backups and loose patches
+# ---------------------------------------------------------------------------
+_pre-publication-backup/
+*.bundle
+*.patch
+
+# ---------------------------------------------------------------------------
+# Assistant working notes
+# ---------------------------------------------------------------------------
+Claude outputs/
+
+# ---------------------------------------------------------------------------
+# Environments and editors
+# ---------------------------------------------------------------------------
+.venv/
+.vscode/
+.cursor/
+
+# ---------------------------------------------------------------------------
+# Build and runtime cruft
+# ---------------------------------------------------------------------------
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
-
-# OS files
-.DS_Store
-external/TangentCFT
-
 artifacts/
-
-hs_err_pid*.log
-
 media/
+hs_err_pid*.log
+cuda_installer.pyz
+
+# ---------------------------------------------------------------------------
+# OS
+# ---------------------------------------------------------------------------
+.DS_Store
